@@ -1,5 +1,4 @@
-{-# LANGUAGE DeriveGeneric #-}
--- Abstract syntax tree of the SME used for representing
+-- Abstract syntax tree of the SME intermediate language used for representing
 -- SME networks
 
 module Language.SMEIL.AST
@@ -21,16 +20,14 @@ module Language.SMEIL.AST
          --       , PrimVal(..)
        ) where
 
-import Text.PrettyPrint.GenericPretty
-
 type Ident = String
-data SMEdtype = SMEdtype SMENum deriving (Generic,Eq, Show)
+data SMEdtype = SMEdtype SMENum deriving (Eq, Show)
 
 -- TODO: Maybe add a PrimVal type for un-reducable values (string, numbers, etc..._
 
 data SMENum = SMEInt Integer
             | SMEFloat Float
-              deriving (Generic,Eq, Show)
+              deriving (Eq, Show)
 
 data DType = IntType
             | FloatType
@@ -44,7 +41,7 @@ data Network = Network { functions :: [Function]
                        , instances :: [Instance]
                        }
                --, mappings :: [Map]}
-             deriving (Generic,Eq, Show)
+             deriving (Eq, Show)
 
 -- type Network = [Function]
 
@@ -52,12 +49,12 @@ data Bus = Bus { busName :: Ident
                , busDtype :: DType
                , busPorts :: [Ident]
                }
-         deriving (Generic,Eq, Show)
+         deriving (Eq, Show)
 
 data Map = Map { srcPort :: Ident
                , dstPort :: Ident
                }
-         deriving (Generic,Eq, Show)
+         deriving (Eq, Show)
 
 data Decl = Decl Ident (Maybe SMENum)
             deriving (Eq, Show)
@@ -68,20 +65,20 @@ data Function = Function { funName :: Ident
                          , locals :: [Decl]
                          , funBody :: [Stmt]
                          }
-              deriving (Generic,Eq, Show)
+              deriving (Eq, Show)
 
 data Instance = Instance { instName :: Ident
                          , instFun :: Ident
                          , inBusses :: [Ident]
                          , outBusses :: [Ident]
                          }
-                deriving (Generic,Eq, Show)
+                deriving (Eq, Show)
 
 type Stmts = [Stmt]
 data Stmt = Assign Ident Expr
           | Cond [(Expr, Stmts)] Stmts
           | NopStmt
-          deriving (Generic,Eq, Show)
+          deriving (Eq, Show)
 
 data BinOps = PlusOp
             | MinusOp
@@ -94,10 +91,10 @@ data BinOps = PlusOp
             | AndOp
             | SLOp
             | SROp
-        deriving (Generic,Eq, Show)
+        deriving (Eq, Show)
 
 data UnOps = NotOp
-           deriving (Generic,Eq, Show)
+           deriving (Eq, Show)
 
 data Expr = BinOp { op :: BinOps
                   , left :: Expr
@@ -110,4 +107,4 @@ data Expr = BinOp { op :: BinOps
           | Var Ident
           | Paren Expr
           | NopExpr
-          deriving (Generic,Eq, Show)
+          deriving (Eq, Show)
