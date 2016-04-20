@@ -1,10 +1,14 @@
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving, PatternSynonyms #-}
 
 module Almique.Analyzer
        ( analyzePyMod
        , AnLog
        , AnError
-       , AnState
+       , AnState (..)
+       , FunInterpState (..)
+       , NewInst (..)
+       , Binding (..)
        )
        where
 
@@ -12,6 +16,7 @@ import qualified Data.Map.Strict as Map
 import Control.Monad.State.Lazy
 import Control.Monad.Except
 import Control.Monad.Writer
+import Control.Monad.Extra (allM)
 import Data.Maybe
 
 import Language.Python.Common as Py hiding (annot)
@@ -25,46 +30,52 @@ import qualified Language.SMEIL as SMEIL
 type SMEIdent = String
 
 -- TODO: Not sure we'll ever need more state information than  his?
-type NameState = Integer
+--type NameState = Integer
 type AnLog = [String]
 
+data NewInst = NewInst { instBindings :: [ Binding ]
+                       , inst :: SMEIL.Instance
+                       }
+             deriving Show
+
+-- TODO: Give a more general definition for Bound
+data Binding = Bound SMEIL.Expr
+             | Free SMEIL.Expr
+             | Binding Binding
+             deriving (Show, Eq)
+
 data AnState = AnState { currentBlock :: Maybe FunInterpState
-                                 , functions :: [SMEIL.Function]
-                                 --, blocks :: Map Ident SMEIL.Function
-                                 , busses :: Map.Map SMEIdent SMEIL.Bus
-                                 , instances :: Map.Map SMEIdent SMEIL.Instance
-                                 , classesSeen :: [String]
-                                 , nameState :: NameState
-                                 }
-                    deriving Show
+                       , funStates :: [ FunInterpState ]
+                                      --, blocks :: Map Ident SMEIL.Function
+                       , busses :: Map.Map SMEIdent SMEIL.Bus
+                       , instances :: Map.Map SMEIdent NewInst
+                       , classesSeen :: [String]
+  --                     , nameState :: NameState
+                       }
+             deriving Show
 
 type AnError = String
 
 data BaseClass = Function | External | Network
+               deriving (Show, Eq)
 
 newState :: AnState
 newState = AnState { currentBlock = Nothing
-                        , functions = mempty
-                        , busses = mempty
-                        , classesSeen = mempty
-                        , instances = mempty
-                        , nameState = 0
-                        }
-
--- TODO: Give a more general definition to Bound
-data Binding = Bound SMEIL.SMENum
-             | Free SMEIdent
-             | Binding
-             deriving (Show, Eq)
+                   , funStates = mempty
+                   , busses = mempty
+                   , classesSeen = mempty
+                   , instances = mempty
+--                   , nameState = 0
+                   }
 
 data FunInterpState = FunInterpState { mappedInBusses :: [SMEIdent]
                                      , mappedOutBusses :: [SMEIdent]
-                                     , bindings :: Map.Map SMEIdent Binding
+                                     , bindings :: Map.Map SMEIL.Variable Binding
                                      , params :: [SMEIdent]
                                      , blockName :: SMEIdent
                                      , blockFunction :: SMEIL.Function
                                      }
-                      deriving (Show, Eq)
+                    deriving (Show, Eq)
 newFunInterpState :: FunInterpState
 newFunInterpState = FunInterpState { mappedInBusses = mempty
                                    , mappedOutBusses = mempty
@@ -77,6 +88,7 @@ newFunInterpState = FunInterpState { mappedInBusses = mempty
                                      , SMEIL.funOutports = mempty
                                      , SMEIL.locals = mempty
                                      , SMEIL.funBody = mempty
+                                     , SMEIL.funType = SMEIL.Undecided
                                      }
                                    }
 
@@ -104,16 +116,16 @@ addClass :: String -> AnState -> AnState
 addClass name s = s { classesSeen = classesSeen s `mappend` [name] }
 
 -- | Return a new globally unique random name
-getName :: AnM String
-getName = do
-  num <- gets nameState
-  modify (\s -> s { nameState = num + 1 } )
-  return $ "tmp_" ++ show num
+-- getName :: AnM String
+-- getName = do
+--   num <- gets nameState
+--   modify (\s -> s { nameState = num + 1 } )
+--   return $ "tmp_" ++ show num
 
 addBus :: SMEIdent -> SMEIL.Bus -> AnM ()
 addBus i b = modify (\s -> s { busses = Map.insert i b $ busses s } )
 
-addInstance :: SMEIdent -> SMEIL.Instance -> AnM ()
+addInstance :: SMEIdent -> NewInst -> AnM ()
 addInstance i b = modify (\s -> s { instances = Map.insert i b $ instances s } )
 
 modifyIS :: (FunInterpState -> FunInterpState) -> AnM ()
@@ -122,24 +134,27 @@ modifyIS f = do
   curBlock <- isNothing <$> gets currentBlock
   unless curBlock ( modify (\s -> s { currentBlock = f <$> currentBlock s }))
 
-addOutbusIS :: [SMEIdent] -> AnM ()
-addOutbusIS i = modifyIS (\s -> s { mappedOutBusses = mappedOutBusses s `mappend` i })
-
-addInbusIS :: [SMEIdent] -> AnM ()
-addInbusIS i = modifyIS (\s -> s { mappedInBusses = mappedInBusses s `mappend` i })
-
-addBindingIS :: SMEIdent -> Binding -> AnM ()
-addBindingIS k v = modifyIS (\s -> s { bindings = Map.insert k v $ bindings s })
-
-addParamsIS :: [SMEIdent] -> AnM ()
-addParamsIS i = modifyIS (\s -> s { params = params s `mappend` i } )
-
 queryIS :: (FunInterpState -> a) -> (a -> b) -> AnM b
 queryIS f t = do
   hasCurBlock <- isNothing <$> gets currentBlock
   when hasCurBlock $ throwError "Internal compiler error: Tried querying and empty block"
   (Just curBlock) <- gets currentBlock
   return $ t $ f curBlock
+
+addOutbusIS :: [SMEIdent] -> AnM ()
+addOutbusIS i = modifyIS (\s -> s { mappedOutBusses = mappedOutBusses s `mappend` i })
+
+addInbusIS :: [SMEIdent] -> AnM ()
+addInbusIS i = modifyIS (\s -> s { mappedInBusses = mappedInBusses s `mappend` i })
+
+addBindingIS :: SMEIL.Variable -> Binding -> AnM ()
+addBindingIS k v = modifyIS (\s -> s { bindings = Map.insert k v $ bindings s })
+
+getBindingIS :: SMEIL.Variable -> AnM (Maybe Binding)
+getBindingIS i = queryIS bindings (Map.lookup i)
+
+addParamsIS :: [SMEIdent] -> AnM ()
+addParamsIS i = modifyIS (\s -> s { params = params s `mappend` i } )
 
 isParam :: SMEIdent -> AnM Bool
 isParam v = queryIS params (\s -> v `elem` s)
@@ -149,6 +164,18 @@ isParam v = queryIS params (\s -> v `elem` s)
 
 setFunInterpState :: FunInterpState -> AnM ()
 setFunInterpState i = modify (\s -> s { currentBlock = Just i })
+
+addFunInterpState :: FunInterpState -> AnM ()
+addFunInterpState i = modify (\s -> s { currentBlock = Just i })
+
+closeFunInterpState :: AnM ()
+closeFunInterpState = do
+  ostate <- gets currentBlock
+  case ostate of
+    Just ostate' -> modify (\s -> s { currentBlock = Nothing
+                                    , funStates = ostate':funStates s
+                                    })
+    Nothing -> throwError "clearFunInterpState called on empty state"
 
 clearFunInterpState :: AnM ()
 clearFunInterpState = modify (\s -> s { currentBlock = Nothing })
@@ -177,8 +204,7 @@ addFunStmt :: SMEIL.Stmt -> AnM ()
 addFunStmt d = modifyCFun (\s -> s { SMEIL.funBody = SMEIL.funBody s `mappend` pure d })
 
 -- |Execute action x in a new context and merge context into AnState
-withNewBlockContext :: AnM () -> AnM ()
-                    -> AnM ()
+withNewBlockContext :: AnM () -> AnM () -> AnM ()
 withNewBlockContext f merger = do
   curState <- isNothing <$> gets currentBlock
   when curState (setFunInterpState newFunInterpState
@@ -190,7 +216,7 @@ withNewBlockContext f merger = do
 -- Pattern definitions
 --------------------------------------------------------------------------------
 
-pattern VarIdent i <- Var { var_ident = Ident { ident_string = i } }
+pattern PVarIdent i <- Var { var_ident = Ident { ident_string = i } }
 pattern PIntLit i <- Int { int_value = i }
 pattern PIdent n <- Ident { ident_string = n }
 pattern PString1 s <- Strings { strings_strings = [s] }
@@ -199,18 +225,18 @@ pattern PArgExpr e <- ArgExpr { arg_expr = e }
 pattern PAssign to expr <- Assign { assign_to = [ to ]
                                   , assign_expr = expr
                                   }
-pattern PClassAssign to ident args <- PAssign (VarIdent to) Call { call_fun = ident
+pattern PClassAssign to ident args <- PAssign (PVarIdent to) Call { call_fun = ident
                                                                  , call_args = args
                                                                  }
 pattern PSelfFunCall fun args <- StmtExpr { stmt_expr =
                                            Call { call_fun =
-                                                   Dot { dot_expr = VarIdent "self"
+                                                   Dot { dot_expr = PVarIdent "self"
                                                        , dot_attribute = PIdent fun
                                                        }
                                                  , call_args = args
                                                  }
                                           }
-pattern PSelfDot dest <- Dot { dot_expr = VarIdent "self"
+pattern PSelfDot dest <- Dot { dot_expr = PVarIdent "self"
                              , dot_attribute = PIdent dest
                              }
 pattern PSelfAssign dest val <- PAssign (PSelfDot dest) val
@@ -225,7 +251,7 @@ stringifyList (PListEls els) = mapM el els
   where
     el :: Expr SrcSpan -> AnM String
     el (PString1 s) = return $ unquote s
-    el (VarIdent i) = return i
+    el (PVarIdent i) = return i
     el _ = throwError "Only lists consisting entirely of variable names, strings or numbers are supported"
 stringifyList _ = throwError "Not a list"
 
@@ -248,12 +274,14 @@ stringifyParamList = mapM unParam
 
 -- TODO: Only remove quotation marks at start or end of string
 unquote :: String -> String
-unquote = filter (`notElem` "\"'")
+unquote = filter (`notElem` ['"', '\''])
 funName :: String -> Statement SrcSpan -> Bool
 
 funName names Fun {fun_name = PIdent name} = name == names
 funName _ _ = False
 
+busDef :: SMEIdent -> SMEIL.Variable
+busDef i = SMEIL.BusVar i ""
 
 --------------------------------------------------------------------------------
 -- Simple Python -> SMEIL type mappings
@@ -293,7 +321,7 @@ mapAssignOp _ = throwError "Operator not supported"
 --------------------------------------------------------------------------------
 
 classifyClass :: [Argument SrcSpan] -> Maybe BaseClass
-classifyClass [ArgExpr {arg_expr = VarIdent arg}]
+classifyClass [ArgExpr {arg_expr = PVarIdent arg}]
   | arg == "External" = Just External
   | arg == "Function" = Just Function
   | arg == "Network" = Just Network
@@ -304,28 +332,34 @@ classifyClass _ = Nothing
 genStatement :: Py.Statement SrcSpan -> AnM ()
 genStatement cls@Class { class_name = Ident { ident_string = name }
                        , class_args = args
-                       , class_body = body
-                       } = do
-  nextName <- getName
-  tell [nextName]
-  case classifyClass args of
-    Just Function -> withNewBlockContext (mapBlockStms (genFunction name) cls) mergeState
-    Just External -> genExternal name body
-    Just Network -> mapBlockStms (genNetwork name) cls
-    Nothing -> do
-      -- FIXME Log that a class was ignored somewhere (and possibly the reason)
-      tell ["Ignoring class " ++ name ++ " due to unsupported class inheritance. i.e. we have no fucking idea what the fuck it's doing (yet)"]
-      return ()
+                       , class_body = _body
+                       } = case classifyClass args of
+  Just t@Function -> genFun t
+  Just t@External -> genFun t
+  Just Network -> withNewBlockContext (mapBlockStms (genNetwork name) cls) clearFunInterpState
+  Nothing -> do
+    -- FIXME Log that a class was ignored somewhere (and possibly the reason)
+    tell ["Ignoring class " ++ name ++ " due to unsupported class inheritance. i.e. we have no fucking idea what the fuck it's doing (yet)"]
+    return ()
   where
-    mergeState :: AnM ()
-    mergeState = return () -- clearFunInterpState
+    genFun t = withNewBlockContext (mapBlockStms (genFunction t name) cls) mergeState
 
+    mergeState :: AnM ()
+    mergeState = closeFunInterpState
 genStatement _ = tell ["Ignoring unsupported top-level statement"]
 
-genFunction :: String -> Statement SrcSpan -> AnM ()
-genFunction name s
+mapBlockStms :: (Statement SrcSpan -> AnM ()) -> Statement SrcSpan -> AnM ()
+mapBlockStms f Fun {fun_body = body} = mapM_ f body
+mapBlockStms f Class {class_body = body} = mapM_ f body
+mapBlockStms f s = do
+  -- FIXME: Does this makes sense? Isn't it an error?
+  tell ["WARNING: called mapBlockStms on statements other fhan Fun or Class"]
+  f s
+
+genFunction :: BaseClass -> String -> Statement SrcSpan -> AnM ()
+genFunction t name s
   | funName "setup" s = setFunName name >> setupParams s >> mapBlockStms genSetup s
-  | funName "run" s = mapBlockStms genRun s
+  | funName "run" s = when (t == Function) (mapBlockStms genRun s)
   | otherwise = tell ["Ignoring unknown statement in function"]
   where
 
@@ -340,36 +374,39 @@ genFunction name s
     genSetup (PSelfFunCall "map_outs" (_:args) ) = do
       argList <- stringifyArgList args
       addOutbusIS argList
-    genSetup (PSelfAssign dest (VarIdent symb)) = do
+    genSetup (PSelfAssign dest (PVarIdent symb)) = do
       param <- isParam symb
         -- TODO: Lookup variable binding in either list of bound variables or
         -- parameters
       if param then
-        void $ addBindingIS dest $ Free symb
-        else
+        void $ addBindingIS (SMEIL.NamedVar dest) $ Free $ SMEIL.Var $ SMEIL.NamedVar symb
+         else
         -- TODO: Do something useful here
-        void $ addBindingIS dest $ Free $ symb ++ "_bound"
+        void $ addBindingIS (SMEIL.NamedVar dest) $ Free . SMEIL.Var . SMEIL.NamedVar $ symb ++ "_bound"
     genSetup (PSelfAssign dest (PIntLit i )) =
-      addBindingIS dest $ Bound $ SMEIL.SMEInt i
+      addBindingIS (SMEIL.NamedVar dest) $ Bound $ SMEIL.Num $ SMEIL.SMEInt i
     genSetup _ = tell ["Ignoring statement in setup function"]
 
     genRun :: Statement SrcSpan -> AnM ()
     genRun a = genStm a >>= addFunStmt
 
 genExpr :: Expr SrcSpan -> AnM SMEIL.Expr
-genExpr Int { int_value = n } = return $ SMEIL.Num $ SMEIL.SMEInt n
+genExpr (PIntLit n) = return $ SMEIL.Num $ SMEIL.SMEInt n
 -- TODO: Check if variable is defined and check if value is a bus or variable
+genExpr Float { float_value = n } = return $ SMEIL.Num $ SMEIL.SMEFloat n
+-- Bus assignment
 genExpr Subscript { subscriptee = PSelfDot v
-                  , subscript_expr = PString1 s} = return $ SMEIL.Var $ v ++ "." ++ unquote s
+                  , subscript_expr = PString1 s} = return $ SMEIL.Var $ SMEIL.BusVar v $ unquote s
 genExpr BinaryOp { operator = op
                  , left_op_arg = l
                  , right_op_arg = r } =
   pure SMEIL.BinOp <*> mapOp op  <*> genExpr l <*> genExpr r
 genExpr UnaryOp { operator = op
                 , op_arg = arg } = pure SMEIL.UnOp <*> mapUnOp op <*> genExpr arg
-genExpr (PSelfDot v) = return $ SMEIL.Var v
+genExpr (PSelfDot v) = return $ SMEIL.Var $ SMEIL.NamedVar v
 genExpr Paren { paren_expr = e } = SMEIL.Paren <$> genExpr e
-genExpr _ = tell ["Unsupported expression"] >> return SMEIL.NopExpr
+genExpr (PVarIdent v) = SMEIL.Var . SMEIL.NamedVar <$> pure v
+genExpr e = tell ["Unsupported expression " ++ show e] >> return SMEIL.NopExpr
 
 genStm :: Statement SrcSpan -> AnM SMEIL.Stmt
 --genStm (PSelfAssign ident expr) = pure (SMEIL.Assign ident) <*> genExpr expr
@@ -378,8 +415,7 @@ genStm Assign { assign_to = [to],
   assignTo <- genExpr to
   case assignTo of
     SMEIL.Var i -> pure (SMEIL.Assign i) <*> genExpr expr
-    _ -> throwError "Assign to expression not supported (not reducible to Var expression)"
-
+    _ -> throwError $ "Assign to expression not supported (not reducible to Var expression)" ++ show to
 genStm Conditional { cond_guards = guards
                    , cond_else = condElse
                    } = pure SMEIL.Cond <*> mapM genGuards guards <*> mapM genStm condElse
@@ -401,27 +437,10 @@ genStm AugmentedAssign { aug_assign_to = to
                 }
 genStm _ = tell ["Unsupported statement"] >> return SMEIL.NopStmt
 
-genExternal :: String -> Suite SrcSpan -> AnM ()
-genExternal name _s = do
-  tell ["Ignoring external class " ++ name]
-  modify $ addClass name
-
-catchFunDef :: Statement SrcSpan
-               -> (Statement SrcSpan -> Bool)
-               -> (Statement SrcSpan -> AnM ())
-               -> AnM ()
-catchFunDef stm predi act = when (predi stm) (act stm)
-
-isBusDef :: Statement SrcSpan -> Bool
-isBusDef Assign {assign_expr = Call {call_fun = VarIdent i}} = i == "Bus"
-isBusDef _ = False
-
-mapBlockStms :: (Statement SrcSpan -> AnM ()) -> Statement SrcSpan -> AnM ()
-mapBlockStms f Fun {fun_body = body} = mapM_ f body
-mapBlockStms f Class {class_body = body} = mapM_ f body
-mapBlockStms f s = do
-  tell ["WARNING: called mapBlockStms on statements other fhan Fun or Class"]
-  f s
+-- genExternal :: String -> Suite SrcSpan -> AnM ()
+-- genExternal name _s = do
+--   tell ["Ignoring external class " ++ name]
+--   modify $ addClass name
 
 genNetwork :: String -> Statement SrcSpan -> AnM ()
 genNetwork _name stm = when (funName "wire" stm) (mapBlockStms networkDef stm)
@@ -433,33 +452,73 @@ genNetwork _name stm = when (funName "wire" stm) (mapBlockStms networkDef stm)
     mapType s = throwError $ "Unsupported bus type " ++ s
 
     networkDef :: Statement SrcSpan -> AnM ()
-    networkDef (PClassAssign varName (VarIdent "Bus")
+    networkDef (PClassAssign varName (PVarIdent "Bus")
                 [ ArgExpr { arg_expr = PString1 bname }
                 , ArgExpr { arg_expr = parlist }
-                , ArgExpr { arg_expr = VarIdent btype }
+                , ArgExpr { arg_expr = PVarIdent btype }
                 ]
                ) = do
       smetype <- mapType btype
       ports <- stringifyList parlist
+      addBindingIS (SMEIL.BusVar varName "") (Bound SMEIL.NopExpr)
       addBus varName SMEIL.Bus { SMEIL.busName = unquote bname
                                , SMEIL.busDtype = smetype
                                , SMEIL.busPorts = ports
                                }
-    networkDef (PClassAssign varName (VarIdent instof)
+    networkDef (PClassAssign varName (PVarIdent instof)
                 ( ArgExpr { arg_expr = PString1 iname }
-                : ArgExpr { arg_expr = inbusses }
-                : ArgExpr { arg_expr = outbusses }
-                -- FIXME: Handle arbitrary parameters
-                : _rest )) = do
+                  : ArgExpr { arg_expr = inbusses }
+                  : ArgExpr { arg_expr = outbusses }
+                  -- FIXME: Handle arbitrary parameters
+                  : rest )) = do
       inbuss <- stringifyList inbusses
       outbuss <- stringifyList outbusses
-      addInstance varName SMEIL.Instance { SMEIL.instName = unquote iname
-                                         , SMEIL.instFun = instof
-                                         , SMEIL.inBusses = inbuss
-                                         , SMEIL.outBusses = outbuss
-                                         }
+      bbound <- bussesBound (outbuss ++ inbuss)
+      unless bbound $
+        throwError $ "One of the following busses were undefined " ++ show (inbuss ++ outbuss)
+      params' <- stringifyArgList rest
+      instBinds <- mapM evalBinding rest
+      addInstance varName NewInst { instBindings = instBinds
+                                  , inst  = SMEIL.Instance { SMEIL.instName = unquote iname
+                                                           , SMEIL.instFun = instof
+                                                           , SMEIL.inBusses = inbuss
+                                                           , SMEIL.outBusses = outbuss
+                                                           , SMEIL.params =
+                                                               map (SMEIL.Var . SMEIL.NamedVar) params'
+                                                           }
+                                  }
+        where
+          evalBinding :: Argument SrcSpan -> AnM Binding
+          evalBinding (ArgExpr p _) = do
+            expr <- genExpr p
+            case expr of
+              n@(SMEIL.Num _) -> return $ Bound n
+              i@(SMEIL.Var v@(SMEIL.NamedVar _n)) -> do
+                binding <- getBindingIS v
+                case binding of
+                  Just (Bound e) -> return $ Bound e
+                  Just free -> return $ Binding free
+                  Nothing -> return $ Free i
+              _ -> tell ["Invalid expression in bus instantiating 1" ++ show p] >> return (Free SMEIL.NopExpr)
+          evalBinding _ = tell ["Invalid expression in bus instantiation 2"] >> return (Free SMEIL.NopExpr)
+
+          bussesBound :: [SMEIdent] -> AnM Bool
+          bussesBound = allM isBoundBus
+            where
+              isBoundBus :: SMEIdent -> AnM Bool
+              isBoundBus i = do
+                binding <- getBindingIS $ busDef i
+                return $ isJust binding
+
     networkDef Fun {fun_name = _n}  = tell ["there shouldn't be a function here "]
-    networkDef _ = tell ["Ignoring unknown statement in busdef"]
+    networkDef s = do
+      -- FIXME: I don't like this
+      stat <- genStm s `catchError` (\_ -> return SMEIL.NopStmt)
+      case stat of
+        (SMEIL.Assign i n@(SMEIL.Var (SMEIL.NamedVar _))) -> addBindingIS i (Free n)
+        (SMEIL.Assign i n@(SMEIL.Num _)) -> addBindingIS i (Bound n)
+        (SMEIL.Assign i SMEIL.NopExpr) -> addBindingIS i (Free SMEIL.NopExpr)
+        _ -> tell ["Ignoring unknown statement in busdef" ++ show stat]
 
 genModule :: Module SrcSpan -> AnM ()
 genModule (Module m) = mapM_ genStatement m

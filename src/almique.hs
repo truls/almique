@@ -6,6 +6,7 @@ import System.Exit
 
 --import Language.SMEIL
 import Almique.Analyzer
+import Almique.Binder
 
 import Language.Python.Common as Py
 import Language.Python.Version3 as Py3

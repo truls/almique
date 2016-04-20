@@ -17,6 +17,8 @@ module Language.SMEIL.AST
        , SMENum(..)
        , Decl(..)
        , DType(..)
+       , FunType(..)
+       , Variable(..)
          --       , PrimVal(..)
        ) where
 
@@ -26,7 +28,7 @@ data SMEdtype = SMEdtype SMENum deriving (Eq, Show)
 -- TODO: Maybe add a PrimVal type for un-reducable values (string, numbers, etc..._
 
 data SMENum = SMEInt Integer
-            | SMEFloat Float
+            | SMEFloat Double
               deriving (Eq, Show)
 
 data DType = IntType
@@ -59,11 +61,17 @@ data Map = Map { srcPort :: Ident
 data Decl = Decl Ident (Maybe SMENum)
             deriving (Eq, Show)
 
+data FunType = Complete
+             | Skeleton
+             | Undecided
+             deriving (Eq, Show)
+
 data Function = Function { funName :: Ident
                          , funInports :: [Ident]
                          , funOutports :: [Ident]
                          , locals :: [Decl]
                          , funBody :: [Stmt]
+                         , funType :: FunType
                          }
               deriving (Eq, Show)
 
@@ -71,11 +79,12 @@ data Instance = Instance { instName :: Ident
                          , instFun :: Ident
                          , inBusses :: [Ident]
                          , outBusses :: [Ident]
+                         , params :: [Expr]
                          }
                 deriving (Eq, Show)
 
 type Stmts = [Stmt]
-data Stmt = Assign Ident Expr
+data Stmt = Assign Variable Expr
           | Cond [(Expr, Stmts)] Stmts
           | NopStmt
           deriving (Eq, Show)
@@ -96,6 +105,11 @@ data BinOps = PlusOp
 data UnOps = NotOp
            deriving (Eq, Show)
 
+data Variable = ConstVar Ident
+              | BusVar Ident Ident
+              | NamedVar Ident
+              deriving (Eq, Show)
+
 data Expr = BinOp { op :: BinOps
                   , left :: Expr
                   , right :: Expr
@@ -104,7 +118,7 @@ data Expr = BinOp { op :: BinOps
                  , unOpVal :: Expr
                  }
           | Num SMENum
-          | Var Ident
+          | Var Variable
           | Paren Expr
           | NopExpr
           deriving (Eq, Show)
