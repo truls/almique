@@ -191,6 +191,14 @@ queryCFun f t = do
 setFunName :: SMEIdent -> AnM ()
 setFunName i = modifyCFun (\s -> s { SMEIL.funName = i } )
 
+setFunType :: BaseClass -> AnM ()
+setFunType c = modifyCFun (\s -> s { SMEIL.funType = mapClass c } )
+  where
+   -- TODO: Avoid this silly mapping by using SMEIL types all over
+   mapClass Function = SMEIL.Complete
+   mapClass External = SMEIL.Skeleton
+   mapClass Network = SMEIL.Undecided
+
 addFunInport :: SMEIL.Ident -> AnM ()
 addFunInport i = modifyCFun (\s -> s { SMEIL.funInports = SMEIL.funInports s `mappend` pure i })
 
@@ -358,7 +366,8 @@ mapBlockStms f s = do
 
 genFunction :: BaseClass -> String -> Statement SrcSpan -> AnM ()
 genFunction t name s
-  | funName "setup" s = setFunName name >> setupParams s >> mapBlockStms genSetup s
+  -- TODO: Make it an error if not both setup and run are present in a class
+  | funName "setup" s = setFunName name >> setFunType t >> setupParams s >> mapBlockStms genSetup s
   | funName "run" s = when (t == Function) (mapBlockStms genRun s)
   | otherwise = tell ["Ignoring unknown statement in function"]
   where
@@ -368,6 +377,8 @@ genFunction t name s
     setupParams _ = throwError "Got passed something that wasn't a function"
 
     genSetup :: Statement SrcSpan -> AnM ()
+    -- TODO: Check that first arg of map_{ins,outs} functions refers to
+    -- parameters of the setup function
     genSetup (PSelfFunCall "map_ins" (_:args) ) = do
       argList <- stringifyArgList args
       addInbusIS argList
@@ -379,7 +390,7 @@ genFunction t name s
         -- TODO: Lookup variable binding in either list of bound variables or
         -- parameters
       if param then
-        void $ addBindingIS (SMEIL.NamedVar dest) $ Free $ SMEIL.Var $ SMEIL.NamedVar symb
+        void $ addBindingIS (SMEIL.NamedVar dest) $ Free . SMEIL.Var . SMEIL.NamedVar $ symb
          else
         -- TODO: Do something useful here
         void $ addBindingIS (SMEIL.NamedVar dest) $ Free . SMEIL.Var . SMEIL.NamedVar $ symb ++ "_bound"
@@ -396,16 +407,17 @@ genExpr (PIntLit n) = return $ SMEIL.Num $ SMEIL.SMEInt n
 genExpr Float { float_value = n } = return $ SMEIL.Num $ SMEIL.SMEFloat n
 -- Bus assignment
 genExpr Subscript { subscriptee = PSelfDot v
-                  , subscript_expr = PString1 s} = return $ SMEIL.Var $ SMEIL.BusVar v $ unquote s
+                  , subscript_expr = PString1 s} = return $ SMEIL.Var . SMEIL.BusVar v $ unquote s
 genExpr BinaryOp { operator = op
                  , left_op_arg = l
                  , right_op_arg = r } =
   pure SMEIL.BinOp <*> mapOp op  <*> genExpr l <*> genExpr r
 genExpr UnaryOp { operator = op
                 , op_arg = arg } = pure SMEIL.UnOp <*> mapUnOp op <*> genExpr arg
-genExpr (PSelfDot v) = return $ SMEIL.Var $ SMEIL.NamedVar v
+genExpr (PSelfDot v) = SMEIL.Var . SMEIL.NamedVar <$> pure v
 genExpr Paren { paren_expr = e } = SMEIL.Paren <$> genExpr e
 genExpr (PVarIdent v) = SMEIL.Var . SMEIL.NamedVar <$> pure v
+-- TODO: Figure out what to do with parsing of assignment to busses
 genExpr e = tell ["Unsupported expression " ++ show e] >> return SMEIL.NopExpr
 
 genStm :: Statement SrcSpan -> AnM SMEIL.Stmt
@@ -437,15 +449,9 @@ genStm AugmentedAssign { aug_assign_to = to
                 }
 genStm _ = tell ["Unsupported statement"] >> return SMEIL.NopStmt
 
--- genExternal :: String -> Suite SrcSpan -> AnM ()
--- genExternal name _s = do
---   tell ["Ignoring external class " ++ name]
---   modify $ addClass name
-
 genNetwork :: String -> Statement SrcSpan -> AnM ()
 genNetwork _name stm = when (funName "wire" stm) (mapBlockStms networkDef stm)
   where
-
     mapType :: String -> AnM SMEIL.DType
     mapType "int" = return SMEIL.IntType
     mapType "float" = return SMEIL.FloatType
@@ -478,6 +484,7 @@ genNetwork _name stm = when (funName "wire" stm) (mapBlockStms networkDef stm)
         throwError $ "One of the following busses were undefined " ++ show (inbuss ++ outbuss)
       params' <- stringifyArgList rest
       instBinds <- mapM evalBinding rest
+      -- FIXME: We can probably get rid of the NewInst wrapping of Instance now
       addInstance varName NewInst { instBindings = instBinds
                                   , inst  = SMEIL.Instance { SMEIL.instName = unquote iname
                                                            , SMEIL.instFun = instof
@@ -499,8 +506,10 @@ genNetwork _name stm = when (funName "wire" stm) (mapBlockStms networkDef stm)
                   Just (Bound e) -> return $ Bound e
                   Just free -> return $ Binding free
                   Nothing -> return $ Free i
-              _ -> tell ["Invalid expression in bus instantiating 1" ++ show p] >> return (Free SMEIL.NopExpr)
-          evalBinding _ = tell ["Invalid expression in bus instantiation 2"] >> return (Free SMEIL.NopExpr)
+              _ -> tell ["Invalid expression in bus instantiating 1" ++ show p]
+                >> return (Free SMEIL.NopExpr)
+          evalBinding _ = tell ["Invalid expression in bus instantiation 2"]
+            >> return (Free SMEIL.NopExpr)
 
           bussesBound :: [SMEIdent] -> AnM Bool
           bussesBound = allM isBoundBus

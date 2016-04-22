@@ -19,7 +19,6 @@ module Language.SMEIL.AST
        , DType(..)
        , FunType(..)
        , Variable(..)
-         --       , PrimVal(..)
        ) where
 
 type Ident = String
@@ -59,7 +58,7 @@ data Map = Map { srcPort :: Ident
          deriving (Eq, Show)
 
 data Decl = Decl Ident (Maybe SMENum)
-            deriving (Eq, Show)
+          deriving (Eq, Show)
 
 data FunType = Complete
              | Skeleton
@@ -81,7 +80,7 @@ data Instance = Instance { instName :: Ident
                          , outBusses :: [Ident]
                          , params :: [Expr]
                          }
-                deriving (Eq, Show)
+              deriving (Eq, Show)
 
 type Stmts = [Stmt]
 data Stmt = Assign Variable Expr

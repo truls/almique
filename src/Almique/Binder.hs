@@ -38,8 +38,8 @@ bindFunction s = undefined
 -- bound variables. How to handle free variables in Externals is still unresolved.
 bindInstance :: A.NewInst -> BindM Instance
 bindInstance A.NewInst { A.instBindings = bindings
-                     , A.inst = i@Instance
-                       { params = ps } } = do
+                       , A.inst = i@Instance
+                         { params = ps } } = do
   matchBindings $ zip bindings ps
   return Instance {}
   where
