@@ -7,7 +7,7 @@ module Language.SMEIL.AST
        , Ident
        , Expr(..)
        , Stmt(..)
-       , Stmts
+       , Stmts(..)
        , Function(..)
        , Network(..)
        , SMEdtype(..)
@@ -19,6 +19,8 @@ module Language.SMEIL.AST
        , DType(..)
        , FunType(..)
        , Variable(..)
+       , PrimVal(..)
+       , SMEBool(..)
        ) where
 
 type Ident = String
@@ -26,18 +28,29 @@ data SMEdtype = SMEdtype SMENum deriving (Eq, Show)
 
 -- TODO: Maybe add a PrimVal type for un-reducable values (string, numbers, etc..._
 
+data PrimVal = Num SMENum
+             | Bool SMEBool
+             | EmptyVal
+             deriving (Eq, Show)
+
 data SMENum = SMEInt Integer
             | SMEFloat Double
-              deriving (Eq, Show)
+            deriving (Eq, Show)
+
+data SMEBool = SMETrue
+             | SMEFalse
+             deriving (Eq, Show)
 
 data DType = IntType
             | FloatType
-              deriving (Eq, Show)
+            | BoolType
+            deriving (Eq, Show)
 
 -- data PrimVal = PrimVal SMENum Integer
 --                deriving (Eq, Show)
 
-data Network = Network { functions :: [Function]
+data Network = Network { netName :: Ident
+                       , functions :: [Function]
                        , busses :: [Bus]
                        , instances :: [Instance]
                        }
@@ -57,7 +70,7 @@ data Map = Map { srcPort :: Ident
                }
          deriving (Eq, Show)
 
-data Decl = Decl Ident (Maybe SMENum)
+data Decl = Decl Variable (Maybe Expr)
           deriving (Eq, Show)
 
 data FunType = Complete
@@ -66,23 +79,32 @@ data FunType = Complete
              deriving (Eq, Show)
 
 data Function = Function { funName :: Ident
-                         , funInports :: [Ident]
-                         , funOutports :: [Ident]
+                         , funInports :: [(Ident, Ident)]
+                         , funOutports :: [(Ident, Ident)]
+                         , funParams :: [Decl]
                          , locals :: [Decl]
-                         , funBody :: [Stmt]
+                         , funBody :: Stmts
                          , funType :: FunType
                          }
               deriving (Eq, Show)
 
 data Instance = Instance { instName :: Ident
                          , instFun :: Ident
+                         -- FIXME: Separate type for bus defs?
                          , inBusses :: [Ident]
                          , outBusses :: [Ident]
-                         , params :: [Expr]
+                         , instParams :: [(Ident, PrimVal)]
                          }
               deriving (Eq, Show)
 
-type Stmts = [Stmt]
+data Stmts = Stmts [Stmt]
+           deriving (Eq, Show)
+
+-- Hack
+instance Monoid Stmts where
+  (Stmts a) `mappend` (Stmts b) = Stmts $ a `mappend` b
+  mempty = Stmts []
+
 data Stmt = Assign Variable Expr
           | Cond [(Expr, Stmts)] Stmts
           | NopStmt
@@ -116,7 +138,7 @@ data Expr = BinOp { op :: BinOps
           | UnOp { unOp :: UnOps
                  , unOpVal :: Expr
                  }
-          | Num SMENum
+          | Prim PrimVal
           | Var Variable
           | Paren Expr
           | NopExpr

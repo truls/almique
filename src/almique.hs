@@ -4,9 +4,10 @@ import System.Environment
 import System.Exit
 -- import Control.Monad.IO.Class
 
---import Language.SMEIL
+import Language.SMEIL
 import Almique.Analyzer
 import Almique.Binder
+import Almique.Output
 
 import Language.Python.Common as Py
 import Language.Python.Version3 as Py3
@@ -25,6 +26,9 @@ parseFile path = do
           Left e -> return $ Left $ GenErr e
           Right r ->  return $ Right r
 
+--bind :: AnState -> Either BindErr Function
+--bind = 
+
 main :: IO ()
 main = do
   args <- getArgs
@@ -40,8 +44,16 @@ main = do
           print res
           -- FIXME: return error code appears not to be working
           exitWith $ ExitFailure 1
-        Right network ->
+        Right network@(st, _log) -> do
           print network
+          case bindPyMod st of
+            Left err -> do
+              print err
+              exitWith $ ExitFailure 1
+            Right network' -> do
+              print network'
+              let plan = makePlan network'
+              execPlan plan
     Nothing -> do
         putStrLn "Usage: almique <file.py>"
         exitWith $ ExitFailure 1
