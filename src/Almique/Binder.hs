@@ -10,6 +10,7 @@ import Control.Monad.Except
 import qualified Data.Map.Strict as Map hiding (map)
 import Data.Maybe (isNothing, fromMaybe)
 import Data.List
+import Data.Monoid
 
 import Language.SMEIL
 import qualified Almique.Analyzer as A
@@ -100,9 +101,9 @@ bindFunction ps = do
   inPorts <- queryIS A.mappedInBusses (`zip` inPortTypes) -- >>= mapM checkBus
   outPorts <- queryIS A.mappedOutBusses (`zip` outPortTypes) -- >>= mapM checkBus
   funParams' <- map mapFunParam <$> queryIS A.params id -- >>= genFunParam
+  (funBody', funVars) <- queryFunCurIS funBody >>= mapStmts checkStmt
   -- FIXME: Using toList feels like a bad idea
-  locals' <- (Map.toList <$> queryIS A.bindings id) >>= mapM mapBinding
-  funBody' <- queryFunCurIS funBody >>= mapStmts checkStmt
+  locals' <- queryIS A.bindings Map.toList >>= mapM (mapBinding funVars)
   return Function { funName = funName'
                   , funInports = inPorts
                   , funOutports = outPorts
@@ -120,14 +121,31 @@ bindFunction ps = do
       getPortMap :: Ident -> ([Ident], [Ident])
       getPortMap i = fromMaybe ([], []) $ lookup i ps
 
-      mapStmts :: (Stmt -> BindM Stmt) -> Stmts -> BindM Stmts
-      mapStmts f (Stmts s)= Stmts <$> mapM f s
+      -- | Map a function over Stmts and accumulate the transformed statements and
+      -- the the list of variables being assigned to (=modified) by the
+      -- statements. We use this to infer variable constness.
+      mapStmts :: (Stmt -> BindM (Stmt, Maybe Variable))
+               -> Stmts
+               -> BindM (Stmts, [Variable])
+      mapStmts f (Stmts s) =
+        mapM f s >>=
+        foldM  (\(stmts, vars) (stmt, var) ->
+                  return ( stmts <> Stmts [stmt]
+                         , vars <> fromMaybe [] ((: []) <$> var))
+               )
+        (mempty, mempty)
 
-      mapBinding :: (Variable, A.Binding) -> BindM Decl
-      mapBinding (i, _b) = do
+      mapBinding :: [Variable] -> (Variable, A.Binding) -> BindM Decl
+      mapBinding vs (i, _b) = do
         binding <- lookupBinding i
         case binding of
-          m@(Just _) -> return $ Decl i m
+          m@(Just _) -> return $ case i of
+                                   BusVar _ _ -> Decl i m
+                                   ConstVar n -> Decl i m
+                                   (NamedVar n) -> if i `notElem` vs then
+                                                     Decl (ConstVar n) m
+                                                   else
+                                                     Decl i m
           Nothing -> throwError $ "Reference to free variable " ++ show i
 
 -- Static checking of SMEIL
@@ -135,8 +153,9 @@ bindFunction ps = do
   -- statement. Then, after all statements has been processed, match list of
   -- bindings with list of touched variables and change variables that were
   -- never touched to constants.
-checkStmt :: Stmt -> BindM Stmt
-checkStmt = return
+checkStmt :: Stmt -> BindM (Stmt, Maybe Variable)
+checkStmt s@(Assign v e) = return (s, Just v)
+checkStmt s = return (s, Nothing)
 
 
 {- TODO:

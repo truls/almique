@@ -129,7 +129,15 @@ data UnOps = NotOp
 data Variable = ConstVar Ident
               | BusVar Ident Ident
               | NamedVar Ident
-              deriving (Eq, Show)
+              deriving Show
+
+-- | Variable _names_ should be unique independent of their kind
+instance Eq Variable where
+  a == b = vname a == vname b
+    where
+      vname (ConstVar n) = n
+      vname (NamedVar n) = n
+      vname (BusVar n m) = n ++ "_" ++ m
 
 data Expr = BinOp { op :: BinOps
                   , left :: Expr

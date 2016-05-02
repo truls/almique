@@ -125,9 +125,8 @@ vhdlExt :: FilePath -> FilePath
 vhdlExt = flip (++) ".vhdl"
 
 makeFun :: Function -> Reader Network OutputFile
-makeFun f = let
-  fname = funName f
-  in do
+makeFun f = do
+  let fname = funName f
   ports <- entPorts f
   return OutputFile { dir = ""
                     , file = vhdlExt fname
