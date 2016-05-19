@@ -200,14 +200,14 @@ setFunType c = modifyCFun (\s -> s { SMEIL.funType = mapClass c } )
    mapClass External = SMEIL.Skeleton
    mapClass Network = SMEIL.Undecided
 
-addFunInport :: (SMEIL.Ident, SMEIL.Ident) -> AnM ()
-addFunInport i = modifyCFun (\s -> s { SMEIL.funInports = SMEIL.funInports s <> pure i })
+-- addFunInport :: (SMEIL.Ident, SMEIL.Ident) -> AnM ()
+-- addFunInport i = modifyCFun (\s -> s { SMEIL.funInports = SMEIL.funInports s <> pure i })
 
-addFunOutport :: (SMEIL.Ident, SMEIL.Ident) -> AnM ()
-addFunOutport i = modifyCFun (\s -> s { SMEIL.funOutports = SMEIL.funOutports s <> pure i})
+-- addFunOutport :: (SMEIL.Ident, SMEIL.Ident) -> AnM ()
+-- addFunOutport i = modifyCFun (\s -> s { SMEIL.funOutports = SMEIL.funOutports s <> pure i})
 
-addFunLocal :: SMEIL.Decl -> AnM ()
-addFunLocal d = modifyCFun (\s -> s { SMEIL.locals = SMEIL.locals s <> pure d })
+-- addFunLocal :: SMEIL.Decl -> AnM ()
+-- addFunLocal d = modifyCFun (\s -> s { SMEIL.locals = SMEIL.locals s <> pure d })
 
 addFunStmt :: SMEIL.Stmt -> AnM ()
 addFunStmt d = modifyCFun (\s -> s { SMEIL.funBody = SMEIL.funBody s <> SMEIL.Stmts (pure d) })
@@ -408,6 +408,9 @@ genFunction t name s
         void $ addBindingIS (SMEIL.NamedVar dest) $ PFreeNamedVar $ symb ++ "_bound"
     genSetup (PSelfAssign dest (PIntLit i )) =
       addBindingIS (SMEIL.NamedVar dest) $ PBoundNum i
+    genSetup (PSelfAssign dest e) = do
+      expr <- genExpr e
+      addBindingIS (SMEIL.NamedVar dest) $ Free expr
     genSetup _ = tell ["Ignoring statement in setup function"]
 
     genRun :: Statement SrcSpan -> AnM ()
@@ -445,11 +448,11 @@ genStm Assign { assign_to = [to]
     _ -> throwError $ "Assign to expression not supported (not reducible to Var expression)" ++ show to
 genStm Conditional { cond_guards = guards
                    , cond_else = condElse
-                   } = SMEIL.Cond <$> mapM genGuards guards <*>
+                   } = SMEIL.Cond <$> mapM genGuard guards <*>
   (SMEIL.Stmts <$> mapM genStm condElse)
       where
-        genGuards :: (Expr SrcSpan, Suite SrcSpan) -> AnM (SMEIL.Expr, SMEIL.Stmts)
-        genGuards (e, s) = (,) <$> genExpr e <*> (SMEIL.Stmts <$> mapM genStm s)
+        genGuard :: (Expr SrcSpan, Suite SrcSpan) -> AnM (SMEIL.Expr, SMEIL.Stmts)
+        genGuard (e, s) = (,) <$> genExpr e <*> (SMEIL.Stmts <$> mapM genStm s)
 genStm AugmentedAssign { aug_assign_to = to
                        , aug_assign_op = op
                        , aug_assign_expr = expr

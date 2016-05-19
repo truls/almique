@@ -12,6 +12,8 @@ import Almique.Output
 import Language.Python.Common as Py
 import Language.Python.Version3 as Py3
 
+import Debug.Trace
+
 -- Parsing or analysis error
 data Error = GenErr AnError | ParseErr ParseError
              deriving Show
@@ -21,7 +23,7 @@ parseFile path = do
     contents <- readFile path
     case Py3.parseModule contents path of
       Left e -> return $ Left $ ParseErr e
-      Right (m, _c) ->
+      Right (m, c) -> trace (show c) $ 
         case analyzePyMod m of
           Left e -> return $ Left $ GenErr e
           Right r ->  return $ Right r

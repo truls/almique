@@ -1,4 +1,5 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase #-}
 
 module Almique.Binder
        ( bindPyMod
@@ -14,6 +15,8 @@ import Data.Monoid
 
 import Language.SMEIL
 import qualified Almique.Analyzer as A
+
+import Debug.Trace
 
 type InstPorts = (Ident, ([Ident], [Ident]))
 type BindErr = String
@@ -34,7 +37,7 @@ queryNamedIS i f = do
   sts <- asks A.funStates
   case Map.lookup i sts of
     Just v -> return $ f v
-    Nothing -> throwError "Undefined function"
+    Nothing -> throwError $ "Undefined function: " ++ i
 
 queryFunIS :: String -> (Function -> a) -> BindM a
 queryFunIS s f = f <$> queryNamedIS s A.blockFunction
@@ -70,6 +73,8 @@ lookupBinding v = do
         return $ Just e
         else
         return Nothing
+    -- TODO: Check that other expressions can be fully evaluated at this point
+    Just (A.Free e) -> return Nothing
     _ -> return Nothing
 
 withCurBlock :: A.FunInterpState -> BindM a -> BindM a
@@ -92,7 +97,7 @@ checkBus b = queryBusDef b id >> return b
 -- verify that variable kinds are correct. Furthermore, we should infer the
 -- the variable kinds being used
 bindFunction :: [InstPorts] -> BindM Function
-bindFunction ps = do
+bindFunction ps = trace (show ps) $ do
   -- FIXME: Most of these mappings (and by extension the entire FunInterpState
   -- type) ended up being rather pointless.
   funName' <- queryFunCurIS funName
@@ -102,6 +107,7 @@ bindFunction ps = do
   outPorts <- queryIS A.mappedOutBusses (`zip` outPortTypes) -- >>= mapM checkBus
   funParams' <- map mapFunParam <$> queryIS A.params id -- >>= genFunParam
   (funBody', funVars) <- queryFunCurIS funBody >>= mapStmts checkStmt
+  funBody'' <- queryFunCurIS funBody
   -- FIXME: Using toList feels like a bad idea
   locals' <- queryIS A.bindings Map.toList >>= mapM (mapBinding funVars)
   return Function { funName = funName'
@@ -109,7 +115,7 @@ bindFunction ps = do
                   , funOutports = outPorts
                   , funParams = funParams'
                   , locals = locals'
-                  , funBody = funBody'
+                  , funBody = funBody''
                   , funType = funType'
                   }
     where
@@ -127,12 +133,17 @@ bindFunction ps = do
       mapStmts :: (Stmt -> BindM (Stmt, Maybe Variable))
                -> Stmts
                -> BindM (Stmts, [Variable])
+      mapStmts f (Stmts (Cond cs e:rest)) = do
+        a <- mapStmts f $ foldr (mappend.snd) mempty cs
+        b <- mapStmts f e
+        c <- mapStmts f $ Stmts rest
+        return $ a <> b <> c
       mapStmts f (Stmts s) =
         mapM f s >>=
-        foldM  (\(stmts, vars) (stmt, var) ->
-                  return ( stmts <> Stmts [stmt]
-                         , vars <> fromMaybe [] ((: []) <$> var))
-               )
+        foldM (\(stmts, vars) (stmt, var) ->
+                 return ( stmts <> Stmts [stmt]
+                        , vars <> fromMaybe [] ((: []) <$> var))
+              )
         (mempty, mempty)
 
       mapBinding :: [Variable] -> (Variable, A.Binding) -> BindM Decl
@@ -141,12 +152,14 @@ bindFunction ps = do
         case binding of
           m@(Just _) -> return $ case i of
                                    BusVar _ _ -> Decl i m
-                                   ConstVar n -> Decl i m
-                                   (NamedVar n) -> if i `notElem` vs then
+                                   ConstVar _ -> Decl i m
+                                   NamedVar n -> if i `notElem` vs then
                                                      Decl (ConstVar n) m
                                                    else
                                                      Decl i m
-          Nothing -> throwError $ "Reference to free variable " ++ show i
+          m@Nothing -> queryFunCurIS funType >>= \case
+            Skeleton -> return $ Decl i m
+            _ -> throwError $ "Reference to free variable " ++ show i
 
 -- Static checking of SMEIL
 -- TODO: (See TODO note below). Maybe output a list of variables modified by the
@@ -159,7 +172,7 @@ checkStmt s = return (s, Nothing)
 
 
 {- TODO:
-- Check variable bindings. If variable is resolved to a function
+- Check variable bindings. If variable is resolved to a futrhnction
   parameter, replace occurrences of the variable with the name of the
   parameter. We do this, because parameters will be mapped to VHDL generics.
 - Infer variable constness. Variables that are never assigned to and have a default
@@ -168,8 +181,9 @@ checkStmt s = return (s, Nothing)
   if assigned to or updated.
 -}
 checkVar :: Variable -> BindM Variable
-checkVar (ConstVar i) = throwError "Const vars are currently unsupported"
-checkVar (NamedVar i) = undefined
+checkVar (ConstVar _) = throwError "Const vars are currently unsupported"
+checkVar (NamedVar _) = undefined
+checkVar (BusVar _ _) = undefined
 
 -- | For each instance of Functions, check that the instantiation parameters
 -- causes all dependent variables of the function being instantiated to become
@@ -185,9 +199,9 @@ bindInstance A.NewInst { A.instBindings = bindings
                          }
                        } = do
   -- Lookup the type of function referred to by instance
-  funtype <- queryFunIS name funType
+  funtype <- queryFunIS fun funType
   -- Bindings of the function that we are instantiating
-  funBinds <- queryNamedIS name A.params
+  funBinds <- queryNamedIS fun A.params
 
   instBinds <- case funtype of
         Complete -> do
@@ -217,24 +231,35 @@ bindInstance A.NewInst { A.instBindings = bindings
     mapBinding (_, A.Bound _) = throwError "Variable bound to non-primitive value"
     mapBinding _ = throwError "Instance parameter bound to free variable"
 
-genPortMap :: Instance -> InstPorts
+genPortMap :: Instance -> BindM InstPorts
 genPortMap Instance { instFun = fun
                     , inBusses = ins
                     , outBusses = outs
-                    } = (fun, (ins, outs))
+                    } = return (fun, (ins, outs))
+  -- TODO: Fix the following by introducing bus "traits" describing the ports of
+  -- busses and their types
+  -- do
+  -- ins' <- mapM busKind ins
+  -- outs' <- mapM busKind outs
+  -- return (fun, (foldr (<>) [] ins',
+  --               foldr (<>) [] outs'))
+  -- where
+  --   -- |Returns the ports of a bus
+  --   busKind :: Ident -> BindM [Ident]
+  --   busKind = flip queryBusDef busPorts
 
+
+-- TODO: Compare bus "kinds", where the "kind" of a bus is the ports of a bus and their types.
 unifyPorts :: [InstPorts] -> BindM [InstPorts]
 -- FIXME: Is partial function (fst) usage safe here?
-unifyPorts ps = foldM merge [] (sortOn fst ps)
+unifyPorts ps = trace (show ps) foldM merge [] (sortOn fst ps)
   where
-    -- Its an error if the same function are instantiated more than once with
-    -- different busses
     merge :: [InstPorts] -> InstPorts -> BindM [InstPorts]
     merge ips@(ip@(i, (ob, ib)):_) ip'@(i', (ob', ib'))
-      | i == i'
-        && ((ob /= ob')
-        || (ib /= ib')) =  throwError $ unlines [ "Unable to unify ports in function instantiations"
-                                                , "Instantiation of " ++ i ++ " with ports " ++ show ob ++ show ib ++ "conflicts with previous instantiatino of " ++ i ++ " with ports " ++ show ob ++ show ib ]
+      -- | i == i'
+      --   && ((ob /= ob')
+      --   || (ib /= ib')) =  throwError $ unlines [ "Unable to unify ports in function instantiations"
+      --                                           , "Instantiation of " ++ i ++ " with ports " ++ show ob' ++ show ib' ++ "conflicts with previous instantiation of " ++ i ++ " with ports " ++ show ob ++ show ib ]
       | ip == ip' = return ips
       | otherwise = return (ip':ips)
     merge [] ip = return [ip]
@@ -243,7 +268,7 @@ bindNetwork :: BindM Network
 bindNetwork = do
   busList <- Map.elems <$> asks A.busses
   insts <- Map.elems <$> asks A.instances >>= mapM bindInstance
-  instPorts <- unifyPorts $ map genPortMap insts
+  instPorts <- mapM genPortMap insts >>= unifyPorts
   funs <- Map.elems <$> asks A.funStates >>= mapM (`withCurBlock` bindFunction instPorts)
   netName' <- asks A.netName
   return Network { functions = funs

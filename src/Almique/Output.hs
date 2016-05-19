@@ -52,23 +52,21 @@ findPred n p f = asks n >>= pure . locate
       | p e = Just $ f e
       | otherwise = locate es
 
-makeTopLevel :: Reader Network Doc
-makeTopLevel = undefined
-
 entity :: Ident -> PortList -> Doc
 entity s d = pp Entity <+> text s <+> pp Is
   $+$ indent (pp Port <+> parens
               ( indent (d
-                        $+$ text "rst: std_logic;"
-                        $+$ text "clk: std_logic;")) <> semi)
-  $+$ text "end" <+> text s <> semi
+                        $+$ text "rst: in std_logic;"
+                        $+$ text "clk: in std_logic;"
+                        $+$ blank)) <> semi)
+  $+$ pp End <+> text s <> semi
 
 funPortNames :: (Ident, Ident) -> Reader Network [Doc]
 funPortNames (n, t) = do
   ps <- findPred busses (\bn -> t == busName bn) busPorts
-  return $ map (\s -> text (n ++ "_" ++ s)) (fromMaybe [] ps)
+  return $ map (\s -> underscores [n,s]) (fromMaybe [] ps)
 
--- |Generates a list of input and output ports 
+-- |Generates a list of input and output ports
 entPorts :: Function -> Reader Network Doc
 entPorts Function { funInports = ins
                   , funOutports = outs } = vcat <$> sequence (map (ports Out) outs ++ map (ports In) ins)
@@ -86,18 +84,31 @@ architecture s signals body = pp Architecture <+> text "RTL" <+> pp Of <+> text 
   $+$ indent body
   $+$ pp EndArchitecture <> semi
 
-process :: FunBody -> SensitivityList -> Doc
-process body sensitivity = pp Process <+> parens ( empty
-                                                   $+$ sensitivity
+makeVarVal :: Maybe Expr -> Doc
+makeVarVal v = fromMaybe empty ((\e -> space <> pp Gets <+> pp e) <$> v)
+
+makeVar :: Decl -> Doc
+makeVar (Decl (NamedVar n) v) = pp Variable <+> text n <> colon
+  <+> text "type" <> makeVarVal v <> semi
+makeVar (Decl (ConstVar n) v) = pp Constant <+> text n <> colon
+  <+> text "type" <> makeVarVal v <> semi
+
+process :: Ident -> FunBody -> SensitivityList -> Reader Network Doc
+process fname body sensitivity = do
+  -- XXX: Why not pass function from caller?
+  vars <- fromMaybe [] <$> findPred functions (\s -> fname == funName s) locals
+  return (pp Process <+> parens ( empty $+$ sensitivity
                                                  )
-  -- TODO: Variable declarations
-  $+$ pp Begin
-  $+$ indent (pp If <+> text "rst = '1'" <+> pp Then
-              $+$ indent (text "-- Reset stuff goes here")
-              $+$ pp Elsif <+> pp (RisingEdge (text "clk")) <> pp Then
-              $+$ indent body
-             )
-  $+$ pp EndIf <> semi
+          -- TODO: Split definitions on constants and variables
+          $+$ vcat (map makeVar vars)
+          $+$ pp Begin
+          $+$ indent (pp If <+> text "rst = '1'" <+> pp Then
+                      $+$ indent (text "-- Reset stuff goes here")
+                      $+$ pp Elsif <+> pp (RisingEdge (text "clk")) <+> pp Then
+                      $+$ indent body
+                     )
+          $+$ pp EndIf <> semi)
+
 
 
 inst :: Instance -> Reader Network Doc
@@ -107,14 +118,37 @@ inst Instance { instName = name
               , outBusses = outbus
               , instParams = params
               } = return $ text name <> colon <+> pp Entity <+> text fun
-  $+$ pp Port <+> pp PortMap <+> parens (indent ( empty
-                                                  $+$ text "foo" <+> pp MapTo <+> text "bar"
-                                                  $+$ text "baz" <+> pp MapTo <+> text "foo"
-                                                  $+$ clockedMap
-                                                ) <> semi)
+  $+$ pp PortMap <+> parens (indent ( empty
+                                      $+$ text "foo" <+> pp MapTo <+> text "bar"
+                                      $+$ text "baz" <+> pp MapTo <+> text "foo"
+                                      $+$ clockedMap
+                                    ) <> semi)
 
 
 
+topPorts :: Reader Network Doc
+topPorts = do
+  sigdefs <- asks busses >>= mapM busSigs
+  return $ vcat sigdefs
+    where
+      busSigs :: Bus -> Reader Network Doc
+      busSigs b = do
+        nn <- asks netName
+        let bn = busName b
+        let bp = busPorts b
+        return $ vcat $ map (\s -> underscores [nn, bn, s]
+                                   <> colon <+> pp InOut <+> text "type"
+                            ) bp
+
+--topPortMap :: Reader Network Doc
+
+makeTopLevel :: Reader Network Doc
+makeTopLevel = do
+  nname <- asks netName
+  ports <- topPorts
+  insts <- asks instances >>= mapM inst
+  return $ entity nname ports
+    $+$ architecture nname (text "signals") (vcat insts)
 {-|
 
 Toplevel: in entity, for every bus referenced by instances
@@ -128,13 +162,12 @@ makeFun :: Function -> Reader Network OutputFile
 makeFun f = do
   let fname = funName f
   ports <- entPorts f
+  procc <- process fname (pp (funBody f))(vcat [ text "clk" <> comma , text "rst"])
   return OutputFile { dir = ""
                     , file = vhdlExt fname
                     , output = header
                       $+$  entity fname ports
-                      $+$ architecture fname empty (process (pp (funBody f))
-                                                    (vcat [ text "clk" <> comma
-                                                          , text "rst"]))
+                      $+$ architecture fname empty procc
                     }
 
 makeNetwork :: Reader Network OutputPlan
@@ -142,9 +175,11 @@ makeNetwork = do
   nn <- asks netName
   funs <- asks functions
   outFuns <- mapM makeFun funs
+  tl <- makeTopLevel
   return $ OutputFile { dir = ""
                       , file = vhdlExt nn
-                      , output = text "--This is the toplevel file"
+                      , output = header
+                        $+$ tl
                       } : outFuns
 
 makePlan :: Network -> OutputPlan

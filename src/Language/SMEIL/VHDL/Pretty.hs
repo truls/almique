@@ -1,6 +1,8 @@
 module Language.SMEIL.VHDL.Pretty
        ( indent
        , unindent
+       , blank
+       , underscores
        , Pretty
        , pp
        , VHDLKw(..)
@@ -22,6 +24,13 @@ indent = nest indentWidth
 unindent :: Doc -> Doc
 unindent = nest (-indentWidth)
 
+-- Used in combination with vcat to insert a new
+blank :: Doc
+blank = text ""
+
+underscores :: [Ident] -> Doc
+underscores is = hcat $ punctuate (text "_") (map text is)
+
 data VHDLKw = Entity
             | Architecture
             | Begin
@@ -34,6 +43,7 @@ data VHDLKw = Entity
             | Then
             | Else
             | Variable
+            | Constant
             | Port
             | EndIf
             | MapTo
@@ -42,6 +52,7 @@ data VHDLKw = Entity
             | Out
             | InOut
             | EndArchitecture
+            | Gets
             deriving Show
 
 data VHDLFuns = RisingEdge Doc
@@ -130,4 +141,5 @@ instance Pretty VHDLKw where
   pp EndIf = pp End <+> pp If
   pp EndArchitecture = pp End <+> pp Architecture
   pp MapTo = text "=>"
+  pp Gets = text ":="
   pp r = text $ map toLower (show r)
