@@ -117,6 +117,10 @@ data BinOps = PlusOp
             | MulOp
             | EqOp
             | NeqOp
+            | GeOp
+            | LeOp
+            | GeqOp
+            | LeqOp
             | DivOp
             | OrOp
             | XorOp
