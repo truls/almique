@@ -13,6 +13,7 @@ class TypeOf a where
   typeOf :: a -> DType
 
 instance TypeOf Variable where
+  typeOf (ParamVar t _) = t
   typeOf (ConstVar t _) = t
   typeOf (BusVar t _ _) = t
   typeOf (NamedVar t _ ) = t

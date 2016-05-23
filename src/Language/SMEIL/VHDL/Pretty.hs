@@ -95,6 +95,7 @@ instance Pretty SMEBool where
   pp SMEFalse = text "false"
 
 instance Pretty Variable where
+  pp (ParamVar t v) = text v
   pp (ConstVar t v) = text v
   pp (NamedVar t v) = text v
   pp (BusVar t i v) = text $ i ++ "_" ++ v
@@ -104,9 +105,10 @@ instance Pretty Stmts where
 
 instance Pretty Stmt where
   pp (Assign v e) = case v of
-    n@(NamedVar t  _) -> pp n <+> pp Gets <+> pp e
-    n@(BusVar t _ _) -> pp n <+> pp BusGets <+> pp e
-    (ConstVar t _) -> text "-- Assignment to constvar attempted"
+    n@(NamedVar _ _) -> pp n <+> pp Gets <+> pp e
+    n@(BusVar _ _ _) -> pp n <+> pp BusGets <+> pp e
+    (ConstVar _ _) -> text "-- Assignment to constvar attempted"
+    (ParamVar _ _) -> text "-- Assignment to generic value"
   pp (Cond ((e, s):cs) es) = pp If <+> pp e <+> pp Then $+$
     indent (pp s) $+$
     vcat (map (\(e', s') -> (pp Elsif <+> pp e' <+> pp Then) $+$
