@@ -91,8 +91,9 @@ queryBusDef i f = do
 
 -- FIXME: Querying a bus just to see if queryBusDef will throw an
 -- error... Is this bad?
-checkBus :: Ident -> BindM Ident
-checkBus b = queryBusDef b id >> return b
+-- Replaced by resolveBusName in bindInstance
+--checkBus :: Ident -> BindM Ident
+--checkBus b = queryBusDef b id >> return b
 
 -- | For each function, check that all variables in function bodies are defined
 -- verify that variable kinds are correct. Furthermore, we should infer the
@@ -255,8 +256,8 @@ bindInstance A.NewInst { A.instBindings = bindings
         Undecided ->
           throwError "Function of unknown kind encountered"
 
-  inb' <- mapM checkBus inb
-  outb' <- mapM checkBus outb
+  inb' <- mapM resolveBusName inb
+  outb' <- mapM resolveBusName outb
   -- We do explicit mappings of type parameters here to trigger warnings if we
   -- change the SMEIL AST
   return Instance { instParams = instBinds
@@ -273,6 +274,9 @@ bindInstance A.NewInst { A.instBindings = bindings
     mapBinding (ident, A.Bound _type (Prim p)) = return (ident, p)
     mapBinding (_, A.Bound _type _) = throwError "Variable bound to non-primitive value"
     mapBinding _ = throwError "Instance parameter bound to free variable"
+
+    resolveBusName :: Ident -> BindM Ident
+    resolveBusName i = queryBusDef i busName
 
 -- genParamTYpe :: Instance -> Bind InstParams
 -- genparamTYpe Instance { instParmas = params
