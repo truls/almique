@@ -19,6 +19,7 @@ import qualified Almique.Analyzer as A
 import Debug.Trace
 
 type InstPorts = (Ident, ([Ident], [Ident]))
+type InstParams = (Ident, (DType, Ident))
 type BindErr = String
 
 newtype BindM a = BindM { unBindM :: ExceptT BindErr (Reader A.AnState) a }
@@ -57,24 +58,24 @@ queryFunCurIS = queryIS A.blockFunction
 -- only checks list of variables (At this point, we know that parameters of
 -- Complete functions becomes bound at runtime)
 resolveFree :: Variable -> BindM Bool
-resolveFree (NamedVar n) = queryIS A.params $ elem n
+resolveFree (NamedVar _ n) = queryIS A.params $ elem n
 resolveFree _ = throwError "resolveFree: Only NamedVar variables can be free?"
 
 -- |Lookup variable binding. If bound, return corresponding expression. If free,
 -- try resolving the binding as a parameter and return Nothing if unsuccessful
-lookupBinding :: Variable -> BindM (Maybe Expr)
+lookupBinding :: Variable -> BindM (Maybe (DType, Expr))
 lookupBinding v = do
   binding <- queryIS A.bindings (Map.lookup v)
   case binding of
-    Just (A.Bound e) -> return $ Just e
-    Just (A.Free e@(Var var)) -> do
+    Just (A.Bound t e) -> return $ Just (t, e)
+    Just (A.Free t e@(Var var)) -> do
       resolved <- resolveFree var
       if resolved then
-        return $ Just e
+        return $ Just (t, e)
         else
         return Nothing
     -- TODO: Check that other expressions can be fully evaluated at this point
-    Just (A.Free e) -> return Nothing
+    Just (A.Free _t _e) -> return Nothing
     _ -> return Nothing
 
 withCurBlock :: A.FunInterpState -> BindM a -> BindM a
@@ -106,73 +107,102 @@ bindFunction ps = trace (show ps) $ do
   inPorts <- queryIS A.mappedInBusses (`zip` inPortTypes) -- >>= mapM checkBus
   outPorts <- queryIS A.mappedOutBusses (`zip` outPortTypes) -- >>= mapM checkBus
   funParams' <- map mapFunParam <$> queryIS A.params id -- >>= genFunParam
-  (funBody', funVars) <- queryFunCurIS funBody >>= mapStmts checkStmt
-  funBody'' <- queryFunCurIS funBody
+  (funBody', funVars) <- queryFunCurIS funBody >>= checkStmts
+  --funBody'' <- queryFunCurIS funBody
   -- FIXME: Using toList feels like a bad idea
   locals' <- queryIS A.bindings Map.toList >>= mapM (mapBinding funVars)
   return Function { funName = funName'
                   , funInports = inPorts
                   , funOutports = outPorts
                   , funParams = funParams'
-                  , locals = locals'
-                  , funBody = funBody''
+                  --, locals = concat $ sequence locals'
+                  , locals = foldr (\a b -> b ++ fromMaybe [] ((: []) <$> a)) [] locals'
+                  , funBody = funBody'
                   , funType = funType'
                   }
     where
       mapFunParam :: Ident -> Decl
       -- FIXME: Kind of useless right now. The Decl in order to enable future
       -- support for default values
-      mapFunParam a = (Decl $ NamedVar a) Nothing
+      mapFunParam a = (Decl $ NamedVar AnyType a) AnyType Nothing
 
       getPortMap :: Ident -> ([Ident], [Ident])
       getPortMap i = fromMaybe ([], []) $ lookup i ps
 
-      -- | Map a function over Stmts and accumulate the transformed statements and
-      -- the the list of variables being assigned to (=modified) by the
-      -- statements. We use this to infer variable constness.
-      mapStmts :: (Stmt -> BindM (Stmt, Maybe Variable))
-               -> Stmts
-               -> BindM (Stmts, [Variable])
-      mapStmts f (Stmts (Cond cs e:rest)) = do
-        a <- mapStmts f $ foldr (mappend.snd) mempty cs
-        b <- mapStmts f e
-        c <- mapStmts f $ Stmts rest
-        return $ a <> b <> c
-      mapStmts f (Stmts s) =
-        mapM f s >>=
-        foldM (\(stmts, vars) (stmt, var) ->
-                 return ( stmts <> Stmts [stmt]
-                        , vars <> fromMaybe [] ((: []) <$> var))
-              )
-        (mempty, mempty)
 
-      mapBinding :: [Variable] -> (Variable, A.Binding) -> BindM Decl
+      -- FIXME: This function doesn't really make sense:
+      --  1) At this point. a binding cannot be anything else than a NamedVar
+      --  2) Bindings declared in this way must have an initial value, i.e. we
+      --  we cannot have a Decl in locals whose value expr evaluates to
+      --  anything else that a PrimVal
+      --  3) Why do we pass a tuple as the second argument if we only use the
+      --  first component of it
+      --
+      -- The only purpose of this function is to generate the local clause of
+      -- SMEIL functions from the bindings generated in the analysis phase which
+      -- are bound to a primval and setting constness.
+      -- Hacking a solution for now, but review this at some point.
+      mapBinding :: [Variable] -> (Variable, A.Binding) -> BindM (Maybe Decl)
       mapBinding vs (i, _b) = do
         binding <- lookupBinding i
+--        let free = fromMaybe False (snd <$> binding)
         case binding of
-          m@(Just _) -> return $ case i of
-                                   BusVar _ _ -> Decl i m
-                                   ConstVar _ -> Decl i m
-                                   NamedVar n -> if i `notElem` vs then
-                                                     Decl (ConstVar n) m
-                                                   else
-                                                     Decl i m
-          m@Nothing -> queryFunCurIS funType >>= \case
-            Skeleton -> return $ Decl i m
+          -- The hack is here
+          foo@(Just (_, Var{})) -> trace (show foo) $ return Nothing
+          foo@(Just (t, v)) -> trace (show foo) $ return $ case i of
+                                   BusVar _ _ _ -> Just $ Decl i t $ Just v
+                                   ConstVar _ _ -> Just $ Decl i t $ Just v
+                                   ParamVar _ _ -> Just $ Decl i t $ Just v
+                                   (NamedVar ty n) ->
+                                     if i `notElem` vs then
+                                       Just $ Decl (ConstVar ty n) t $ Just v
+                                       else
+                                          Just $ Decl i t $ Just v
+          Nothing -> queryFunCurIS funType >>= \case
+            Skeleton -> return $ Just $ Decl i AnyType Nothing
             _ -> throwError $ "Reference to free variable " ++ show i
 
+
 -- Static checking of SMEIL
--- TODO: (See TODO note below). Maybe output a list of variables modified by the
-  -- statement. Then, after all statements has been processed, match list of
-  -- bindings with list of touched variables and change variables that were
-  -- never touched to constants.
+
+-- | Map a function over Stmts and accumulate the transformed statements and
+-- the the list of variables being assigned to (=modified) by the
+-- statements. We use this to infer variable constness.
+checkStmts :: Stmts -> BindM (Stmts, [Variable])
+checkStmts (Stmts (Cond cs e:rest)) = do
+  let (es, ss) = unzip cs
+  es' <- mapM checkExpr es
+  (ss', vs) <- mapAndUnzipM checkStmts ss
+  (e', ve) <- checkStmts e
+  rest' <- checkStmts $ Stmts rest
+  return $ (Stmts [Cond (zip es' ss') e'], ve ++ concat vs) <> rest'
+checkStmts (Stmts s) =
+  mapM checkStmt s >>=
+  foldM (\(stmts, vars) (stmt, var) ->
+           return ( stmts <> Stmts [stmt]
+                  , vars <> fromMaybe [] ((: []) <$> var))
+        )
+  (mempty, mempty)
+
 checkStmt :: Stmt -> BindM (Stmt, Maybe Variable)
-checkStmt s@(Assign v e) = return (s, Just v)
+checkStmt s@(Assign v e) = do
+  e' <- checkExpr e
+  return (Assign v e', Just v)
 checkStmt s = return (s, Nothing)
 
+checkExpr :: Expr -> BindM Expr
+checkExpr BinOp { op = o
+                , left = l
+                , right = r } = BinOp <$> pure o <*> checkExpr l <*> checkExpr r
+checkExpr UnOp { unOp = o
+               , unOpVal = v } = UnOp <$> pure o <*> checkExpr v
+checkExpr p@Prim{} = return p
+checkExpr (Var v) = Var <$> checkVar v
+checkExpr (Paren e) = Paren <$> checkExpr e
+checkExpr n@NopExpr = return n
 
 {- TODO:
-- Check variable bindings. If variable is resolved to a futrhnction
+- Check variable bindings. If variable is resolved to a function
   parameter, replace occurrences of the variable with the name of the
   parameter. We do this, because parameters will be mapped to VHDL generics.
 - Infer variable constness. Variables that are never assigned to and have a default
@@ -181,9 +211,20 @@ checkStmt s = return (s, Nothing)
   if assigned to or updated.
 -}
 checkVar :: Variable -> BindM Variable
-checkVar (ConstVar _) = throwError "Const vars are currently unsupported"
-checkVar (NamedVar _) = undefined
-checkVar (BusVar _ _) = undefined
+checkVar v@(ConstVar _ _) = return v
+checkVar v@(ParamVar _ _) = return v
+checkVar v@(NamedVar _ _n) = do
+  binding <- lookupBinding v
+  case binding of
+    Just (t, Var nv@(NamedVar _ n)) -> do
+      isParam <- resolveFree nv
+      if isParam then
+        return $ ParamVar (typeOf nv) n
+        else
+        return v
+    Just _ -> return v
+    Nothing -> return v
+checkVar v@BusVar {}  = return v
 
 -- | For each instance of Functions, check that the instantiation parameters
 -- causes all dependent variables of the function being instantiated to become
@@ -225,11 +266,16 @@ bindInstance A.NewInst { A.instBindings = bindings
                   , outBusses = outb'
                   }
   where
+    --inferPrim :: PrimVal
     -- Looks up binding and and maps it to function parameter if it is bound
     mapBinding :: (Ident, A.Binding) -> BindM (Ident, PrimVal)
-    mapBinding (ident, A.Bound (Prim p)) = return (ident, p)
-    mapBinding (_, A.Bound _) = throwError "Variable bound to non-primitive value"
+    -- FIXME: Maybe do something about the type here
+    mapBinding (ident, A.Bound _type (Prim p)) = return (ident, p)
+    mapBinding (_, A.Bound _type _) = throwError "Variable bound to non-primitive value"
     mapBinding _ = throwError "Instance parameter bound to free variable"
+
+-- genParamTYpe :: Instance -> Bind InstParams
+-- genparamTYpe Instance { instParmas = params
 
 genPortMap :: Instance -> BindM InstPorts
 genPortMap Instance { instFun = fun
@@ -247,7 +293,6 @@ genPortMap Instance { instFun = fun
   --   -- |Returns the ports of a bus
   --   busKind :: Ident -> BindM [Ident]
   --   busKind = flip queryBusDef busPorts
-
 
 -- TODO: Compare bus "kinds", where the "kind" of a bus is the ports of a bus and their types.
 unifyPorts :: [InstPorts] -> BindM [InstPorts]

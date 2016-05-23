@@ -57,7 +57,7 @@ entity s d = pp Entity <+> text s <+> pp Is
   $+$ indent (pp Port <+> parens
               ( indent (d
                         $+$ text "rst: in std_logic;"
-                        $+$ text "clk: in std_logic;"
+                        $+$ text "clk: in std_logic"
                         $+$ blank)) <> semi)
   $+$ pp End <+> text s <> semi
 
@@ -88,9 +88,9 @@ makeVarVal :: Maybe Expr -> Doc
 makeVarVal v = fromMaybe empty ((\e -> space <> pp Gets <+> pp e) <$> v)
 
 makeVar :: Decl -> Doc
-makeVar (Decl (NamedVar n) v) = pp Variable <+> text n <> colon
+makeVar (Decl (NamedVar ty n) t v) = pp Variable <+> text n <> colon
   <+> text "type" <> makeVarVal v <> semi
-makeVar (Decl (ConstVar n) v) = pp Constant <+> text n <> colon
+makeVar (Decl (ConstVar ty n) t v) = pp Constant <+> text n <> colon
   <+> text "type" <> makeVarVal v <> semi
 
 process :: Ident -> FunBody -> SensitivityList -> Reader Network Doc
@@ -106,8 +106,9 @@ process fname body sensitivity = do
                       $+$ indent (text "-- Reset stuff goes here")
                       $+$ pp Elsif <+> pp (RisingEdge (text "clk")) <+> pp Then
                       $+$ indent body
+                      $+$ pp EndIf <> semi
                      )
-          $+$ pp EndIf <> semi)
+          $+$ pp EndProcess <> semi)
 
 
 
@@ -123,8 +124,6 @@ inst Instance { instName = name
                                       $+$ text "baz" <+> pp MapTo <+> text "foo"
                                       $+$ clockedMap
                                     ) <> semi)
-
-
 
 topPorts :: Reader Network Doc
 topPorts = do
@@ -176,11 +175,19 @@ makeNetwork = do
   funs <- asks functions
   outFuns <- mapM makeFun funs
   tl <- makeTopLevel
-  return $ OutputFile { dir = ""
-                      , file = vhdlExt nn
-                      , output = header
-                        $+$ tl
-                      } : outFuns
+  return $  OutputFile { dir = ""
+                       , file = vhdlExt nn
+                       , output = header $+$ tl
+                       }
+    : OutputFile { dir = ""
+                 , file = vhdlExt "csv_util"
+                 , output = csvUtil
+                 }
+    : OutputFile { dir = ""
+                 , file = vhdlExt "sme_types"
+                 , output = systemTypes
+                 }
+    : outFuns
 
 makePlan :: Network -> OutputPlan
 makePlan = runReader makeNetwork

@@ -7,6 +7,7 @@ import Language.SMEIL.AST
 instance Ord Variable where
   a `compare` b = s a `compare` s b
     where
-      s (ConstVar i) = "const_" ++ i
-      s (BusVar i j) = "bus_" ++ i ++ "_" ++ j
-      s (NamedVar i) = "name_" ++ i
+      s (ConstVar _ i) = "const_" ++ i
+      s (BusVar _ i j) = "bus_" ++ i ++ "_" ++ j
+      s (NamedVar _ i) = "name_" ++ i
+

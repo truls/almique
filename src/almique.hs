@@ -23,7 +23,7 @@ parseFile path = do
     contents <- readFile path
     case Py3.parseModule contents path of
       Left e -> return $ Left $ ParseErr e
-      Right (m, c) -> trace (show c) $ 
+      Right (m, c) -> trace (show c) $
         case analyzePyMod m of
           Left e -> return $ Left $ GenErr e
           Right r ->  return $ Right r

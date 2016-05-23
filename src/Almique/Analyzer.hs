@@ -38,8 +38,8 @@ data NewInst = NewInst { instBindings :: [ Binding ]
              deriving Show
 
 -- TODO: Give a more general definition for Bound
-data Binding = Bound SMEIL.Expr
-             | Free SMEIL.Expr
+data Binding = Bound SMEIL.DType SMEIL.Expr
+             | Free SMEIL.DType SMEIL.Expr
              | Binding Binding
              deriving (Show, Eq)
 
@@ -251,8 +251,8 @@ pattern PSelfAssign dest val <- PAssign (PSelfDot dest) val
 pattern PExprInt n = SMEIL.Prim (SMEIL.Num (SMEIL.SMEInt n))
 pattern PExprFloat n = SMEIL.Prim (SMEIL.Num (SMEIL.SMEFloat n))
 pattern PExprBool n = SMEIL.Prim (SMEIL.Bool n)
-pattern PBoundNum n = Bound (PExprInt n)
-pattern PFreeNamedVar v = Free (SMEIL.Var (SMEIL.NamedVar v))
+pattern PBoundNum n = Bound (SMEIL.IntType 32) (PExprInt n)
+pattern PFreeNamedVar v t = Free t (SMEIL.Var (SMEIL.NamedVar SMEIL.AnyType v))
 
 --------------------------------------------------------------------------------
 -- Utility functions
@@ -293,7 +293,7 @@ funName names Fun {fun_name = PIdent name} = name == names
 funName _ _ = False
 
 busDef :: SMEIdent -> SMEIL.Variable
-busDef i = SMEIL.BusVar i ""
+busDef i = SMEIL.BusVar SMEIL.AnyType i ""
 
 --------------------------------------------------------------------------------
 -- Simple Python -> SMEIL type mappings
@@ -402,15 +402,15 @@ genFunction t name s
         -- TODO: Lookup variable binding in either list of bound variables or
         -- parameters
       if param then
-        void $ addBindingIS (SMEIL.NamedVar dest) $ PFreeNamedVar symb
+        void $ addBindingIS (SMEIL.NamedVar SMEIL.AnyType dest) $ PFreeNamedVar symb SMEIL.AnyType
          else
         -- TODO: Do something useful here
-        void $ addBindingIS (SMEIL.NamedVar dest) $ PFreeNamedVar $ symb ++ "_bound"
+        void $ addBindingIS (SMEIL.NamedVar SMEIL.AnyType dest) $ PFreeNamedVar (symb ++ "_bound") SMEIL.AnyType
     genSetup (PSelfAssign dest (PIntLit i )) =
-      addBindingIS (SMEIL.NamedVar dest) $ PBoundNum i
+      addBindingIS (SMEIL.NamedVar (SMEIL.IntType 32) dest) $ PBoundNum i
     genSetup (PSelfAssign dest e) = do
       expr <- genExpr e
-      addBindingIS (SMEIL.NamedVar dest) $ Free expr
+      addBindingIS (SMEIL.NamedVar SMEIL.AnyType dest) $ Free SMEIL.AnyType expr
     genSetup _ = tell ["Ignoring statement in setup function"]
 
     genRun :: Statement SrcSpan -> AnM ()
@@ -423,16 +423,17 @@ genExpr Float { float_value = n } = return $ PExprFloat n
 genExpr Bool { bool_value = b } = return $ PExprBool $ mapBool b
 -- Bus assignment
 genExpr Subscript { subscriptee = PSelfDot v
-                  , subscript_expr = PString1 s } = return $ SMEIL.Var . SMEIL.BusVar v $ unquote s
+                  , subscript_expr = PString1 s } =
+  return $ SMEIL.Var . SMEIL.BusVar SMEIL.AnyType v $ unquote s
 genExpr BinaryOp { operator = op
                  , left_op_arg = l
                  , right_op_arg = r } =
   SMEIL.BinOp <$> mapOp op  <*> genExpr l <*> genExpr r
 genExpr UnaryOp { operator = op
                 , op_arg = arg } = SMEIL.UnOp <$> mapUnOp op <*> genExpr arg
-genExpr (PSelfDot v) = SMEIL.Var . SMEIL.NamedVar <$> pure v
+genExpr (PSelfDot v) = SMEIL.Var . SMEIL.NamedVar SMEIL.AnyType <$> pure v
 genExpr Paren { paren_expr = e } = SMEIL.Paren <$> genExpr e
-genExpr (PVarIdent v) = SMEIL.Var . SMEIL.NamedVar <$> pure v
+genExpr (PVarIdent v) = SMEIL.Var . SMEIL.NamedVar SMEIL.AnyType <$> pure v
 -- TODO: Figure out what to do with parsing of assignment to busses
 genExpr e = tell ["Unsupported expression " ++ show e] >> return SMEIL.NopExpr
 
@@ -472,8 +473,8 @@ genNetwork :: String -> Statement SrcSpan -> AnM ()
 genNetwork name stm = when (funName "wire" stm) (mapBlockStms networkDef stm)
   where
     mapType :: String -> AnM SMEIL.DType
-    mapType "int" = return SMEIL.IntType
-    mapType "float" = return SMEIL.FloatType
+    mapType "int" = return $ SMEIL.IntType 32
+    mapType "float" = return $ SMEIL.FloatType 32
     mapType s = throwError $ "Unsupported bus type " ++ s
 
     networkDef :: Statement SrcSpan -> AnM ()
@@ -485,7 +486,7 @@ genNetwork name stm = when (funName "wire" stm) (mapBlockStms networkDef stm)
                ) = do
       smetype <- mapType btype
       ports <- stringifyList parlist
-      addBindingIS (SMEIL.BusVar varName "") (Bound SMEIL.NopExpr)
+      addBindingIS (SMEIL.BusVar SMEIL.AnyType varName "") (Bound SMEIL.AnyType SMEIL.NopExpr)
       addBus varName SMEIL.Bus { SMEIL.busName = unquote bname
                                , SMEIL.busDtype = smetype
                                , SMEIL.busPorts = ports
@@ -503,6 +504,8 @@ genNetwork name stm = when (funName "wire" stm) (mapBlockStms networkDef stm)
         throwError $ "One of the following busses were undefined " ++ show (inbuss ++ outbuss)
       params' <- stringifyArgList rest
       instBinds <- mapM evalBinding rest
+
+
       -- FIXME: We can probably get rid of the NewInst wrapping of Instance now
       addInstance varName NewInst { instBindings = instBinds
                                   , inst  = SMEIL.Instance { SMEIL.instName = unquote iname
@@ -518,17 +521,17 @@ genNetwork name stm = when (funName "wire" stm) (mapBlockStms networkDef stm)
           evalBinding (ArgExpr p _) = do
             expr <- genExpr p
             case expr of
-              n@(SMEIL.Prim (SMEIL.Num _)) -> return $ Bound n
-              i@(SMEIL.Var v@(SMEIL.NamedVar _n)) -> do
+              n@(SMEIL.Prim (SMEIL.Num _)) -> return $ Bound (SMEIL.IntType 32) n
+              i@(SMEIL.Var v@(SMEIL.NamedVar _ _n)) -> do
                 binding <- getBindingIS v
                 case binding of
-                  Just (Bound e) -> return $ Bound e
+                  Just b@Bound{} -> return b
                   Just free -> return $ Binding free
-                  Nothing -> return $ Free i
+                  Nothing -> return $ Free SMEIL.AnyType i
               _ -> tell ["Invalid expression in bus instantiating 1" ++ show p]
-                >> return (Free SMEIL.NopExpr)
+                >> return (Free SMEIL.AnyType SMEIL.NopExpr)
           evalBinding _ = tell ["Invalid expression in bus instantiation 2"]
-            >> return (Free SMEIL.NopExpr)
+            >> return (Free SMEIL.AnyType SMEIL.NopExpr)
 
           bussesBound :: [SMEIdent] -> AnM Bool
           bussesBound = allM isBoundBus
@@ -543,9 +546,9 @@ genNetwork name stm = when (funName "wire" stm) (mapBlockStms networkDef stm)
       -- FIXME: I don't like this
       stat <- genStm s `catchError` (\_ -> return SMEIL.NopStmt)
       case stat of
-        (SMEIL.Assign i n@(SMEIL.Var (SMEIL.NamedVar _))) -> addBindingIS i (Free n)
-        (SMEIL.Assign i n@(SMEIL.Prim (SMEIL.Num _))) -> addBindingIS i (Bound n)
-        (SMEIL.Assign i SMEIL.NopExpr) -> addBindingIS i (Free SMEIL.NopExpr)
+        (SMEIL.Assign i n@(SMEIL.Var (SMEIL.NamedVar _ _))) -> addBindingIS i (Free SMEIL.AnyType n)
+        (SMEIL.Assign i n@(SMEIL.Prim (SMEIL.Num _))) -> addBindingIS i (Bound (SMEIL.IntType 32) n)
+        (SMEIL.Assign i SMEIL.NopExpr) -> addBindingIS i (Free SMEIL.AnyType SMEIL.NopExpr)
         _ -> tell ["Ignoring unknown statement in busdef" ++ show stat]
 
 genModule :: Module SrcSpan -> AnM ()

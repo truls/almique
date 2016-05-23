@@ -52,7 +52,16 @@ data VHDLKw = Entity
             | Out
             | InOut
             | EndArchitecture
+            | EndProcess
             | Gets
+            | BusGets
+            | ShiftLeft
+            | ShiftRight
+            | Package
+            | Subtype
+            | Downto
+            | StdLogicVec Int Int
+            | StdLogic
             deriving Show
 
 data VHDLFuns = RisingEdge Doc
@@ -69,6 +78,9 @@ instance Pretty VHDLFuns where
 class Pretty a where
   pp :: a -> Doc
 
+instance Pretty Int where
+  pp n = integer $ fromIntegral n
+
 instance Pretty PrimVal where
   pp (Num n) = pp n
   pp (Bool n) = pp n
@@ -83,18 +95,18 @@ instance Pretty SMEBool where
   pp SMEFalse = text "false"
 
 instance Pretty Variable where
-  pp (ConstVar v) = text v
-  pp (NamedVar v) = text v
-  pp (BusVar i v) = text $ i ++ "_" ++ v
+  pp (ConstVar t v) = text v
+  pp (NamedVar t v) = text v
+  pp (BusVar t i v) = text $ i ++ "_" ++ v
 
 instance Pretty Stmts where
   pp (Stmts s) = vcat $ map pp s
 
 instance Pretty Stmt where
   pp (Assign v e) = case v of
-    n@(NamedVar _) -> pp n <+> text ":=" <+> pp e
-    n@(BusVar _ _) -> pp n <+> text "<=" <+> pp e
-    (ConstVar _) -> text "-- Assignment to constvar attempted"
+    n@(NamedVar t  _) -> pp n <+> pp Gets <+> pp e
+    n@(BusVar t _ _) -> pp n <+> pp BusGets <+> pp e
+    (ConstVar t _) -> text "-- Assignment to constvar attempted"
   pp (Cond ((e, s):cs) es) = pp If <+> pp e <+> pp Then $+$
     indent (pp s) $+$
     vcat (map (\(e', s') -> (pp Elsif <+> pp e' <+> pp Then) $+$
@@ -108,6 +120,14 @@ instance Pretty Stmt where
   pp NopStmt = text ";"
 
 instance Pretty Expr where
+  pp BinOp { op = SLOp
+           , left = l
+           , right = r
+           } = pp ShiftLeft <> parens (pp l <> comma <+> pp r)
+  pp BinOp { op = SROp
+           , left = l
+           , right = r
+           } = pp ShiftRight <> parens (pp l <> comma <+> pp r)
   pp BinOp { op = p
            , left = l
            , right = r
@@ -140,6 +160,12 @@ instance Pretty VHDLKw where
   pp PortMap = pp Port <+> text "map"
   pp EndIf = pp End <+> pp If
   pp EndArchitecture = pp End <+> pp Architecture
+  pp EndProcess = pp End <+> pp Process
   pp MapTo = text "=>"
   pp Gets = text ":="
+  pp BusGets = text "<="
+  pp ShiftLeft = text "shift_left"
+  pp ShiftRight = text "shift_right"
+  pp (StdLogicVec i j) = text "std_logic_vector" <> parens (pp i <+> pp Downto <+> pp j)
+  pp StdLogic = text "std_logic"
   pp r = text $ map toLower (show r)

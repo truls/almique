@@ -41,9 +41,11 @@ data SMEBool = SMETrue
              | SMEFalse
              deriving (Eq, Show)
 
-data DType = IntType
-            | FloatType
-            | BoolType
+data DType = IntType Int
+           | UIntType Int
+           | FloatType Int
+           | BoolType
+           | AnyType
             deriving (Eq, Show)
 
 -- data PrimVal = PrimVal SMENum Integer
@@ -70,7 +72,7 @@ data Map = Map { srcPort :: Ident
                }
          deriving (Eq, Show)
 
-data Decl = Decl Variable (Maybe Expr)
+data Decl = Decl Variable DType (Maybe Expr)
           deriving (Eq, Show)
 
 data FunType = Complete
@@ -126,18 +128,20 @@ data BinOps = PlusOp
 data UnOps = NotOp
            deriving (Eq, Show)
 
-data Variable = ConstVar Ident
-              | BusVar Ident Ident
-              | NamedVar Ident
+data Variable = ConstVar DType Ident
+              | BusVar DType Ident Ident
+              | NamedVar DType Ident
+              | ParamVar DType Ident
               deriving Show
 
 -- | Variable _names_ should be unique independent of their kind
 instance Eq Variable where
   a == b = vname a == vname b
     where
-      vname (ConstVar n) = n
-      vname (NamedVar n) = n
-      vname (BusVar n m) = n ++ "_" ++ m
+      vname (ConstVar _ n) = n
+      vname (NamedVar _ n) = n
+      vname (BusVar _ n m) = n ++ "_" ++ m
+      vname (ParamVar _ n) = n
 
 data Expr = BinOp { op :: BinOps
                   , left :: Expr
