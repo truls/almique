@@ -13,6 +13,7 @@ module Almique.Analyzer
        where
 
 import qualified Data.Map.Strict as Map
+--import qualified Data.Set as Set
 import Control.Monad.State.Lazy
 import Control.Monad.Except
 import Control.Monad.Writer
@@ -73,6 +74,7 @@ data FunInterpState = FunInterpState { mappedInBusses :: [SMEIdent]
                                      , mappedOutBusses :: [SMEIdent]
                                      , bindings :: Map.Map SMEIL.Variable Binding
                                      , params :: [SMEIdent]
+                                     --, nameSet :: Set.Set SMEIL.Variable
                                      , blockFunction :: SMEIL.Function
                                      }
                     deriving (Show, Eq)
@@ -81,6 +83,7 @@ newFunInterpState = FunInterpState { mappedInBusses = mempty
                                    , mappedOutBusses = mempty
                                    , bindings = mempty
                                    , params = mempty
+                                   --, nameSet = Set.empty
                                    , blockFunction = SMEIL.Function
                                      { SMEIL.funName = mempty
                                      , SMEIL.funInports = mempty

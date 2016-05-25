@@ -7,12 +7,14 @@ module Almique.Output
 
 import Text.PrettyPrint
 import Control.Monad.Reader
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, isNothing)
 
 import System.Directory
 
 import Language.SMEIL
 import Language.SMEIL.VHDL
+
+import Debug.Trace
 
 type PortList = Doc
 type PortMap = Doc
@@ -20,6 +22,7 @@ type SensitivityList = Doc
 type SignalList = Doc
 type FunBody = Doc
 type ArchitectureBody = Doc
+type GenericDefs = Doc
 
 -- TODO: Split into two modules: One for doing the file handling stuff and one
 -- for rendering the actual output
@@ -52,17 +55,24 @@ findPred n p f = asks n >>= pure . locate
       | p e = Just $ f e
       | otherwise = locate es
 
-entity :: Ident -> PortList -> Doc
-entity s d = pp Entity <+> text s <+> pp Is
-  $+$ indent (pp Port <+> parens
-              ( indent (d
-                        $+$ text "rst: in std_logic;"
-                        $+$ text "clk: in std_logic"
-                        $+$ blank)) <> semi)
+-- ppIf :: Bool -> Doc -> Doc
+-- ppIf c d = if c then d else empty
+
+entity :: Ident -> PortList -> GenericDefs -> Doc
+entity s d g = pp Entity <+> text s <+> pp Is
+  $+$ indent ((if isEmpty g then empty else pp Generic <+> parens g <> semi)
+              $+$ (pp Port <+> parens
+                   ( indent (
+                       d
+                       $+$ text "rst: in std_logic;"
+                       $+$ text "clk: in std_logic"
+                       $+$ blank)) <> semi))
   $+$ pp End <+> text s <> semi
 
 funPortNames :: (Ident, Ident) -> Reader Network [Doc]
 funPortNames (n, t) = do
+  -- FIXME: This simply returns nothing if the bus referred to
+  -- 1) Do static checking in Binder to make sure this cannot fail
   ps <- findPred busses (\bn -> t == busName bn) busPorts
   return $ map (\s -> underscores [n,s]) (fromMaybe [] ps)
 
@@ -76,6 +86,13 @@ entPorts Function { funInports = ins
       names <- funPortNames ps
       return $ vcat $
         map (\s -> s <> colon <+> pp d <+> text "type" <> semi) names
+
+-- TODO: Support other types than integer here
+entGenerics :: Function -> Doc
+entGenerics Function { funParams = p } =
+  vcat $ punctuate comma $ map (\v -> pp v <> colon <+> pp Integer) (getVars p)
+  where
+    getVars vs = [ v | (Decl v _ _) <- vs ]
 
 architecture :: Ident -> SignalList -> Doc -> Doc
 architecture s signals body = pp Architecture <+> text "RTL" <+> pp Of <+> text s <+> pp Is
@@ -97,8 +114,7 @@ process :: Ident -> FunBody -> SensitivityList -> Reader Network Doc
 process fname body sensitivity = do
   -- XXX: Why not pass function from caller?
   vars <- fromMaybe [] <$> findPred functions (\s -> fname == funName s) locals
-  return (pp Process <+> parens ( empty $+$ sensitivity
-                                                 )
+  return (pp Process <+> parens ( empty $+$ sensitivity )
           -- TODO: Split definitions on constants and variables
           $+$ vcat (map makeVar vars)
           $+$ pp Begin
@@ -110,7 +126,23 @@ process fname body sensitivity = do
                      )
           $+$ pp EndProcess <> semi)
 
+instPortMap :: (Ident, Ident) -> Reader Network Doc
+instPortMap ps = do
+  bus <- findPred busses (\s -> snd ps == busName s) id
+  asTopPorts <- fromMaybe (return []) (topBusPorts <$> bus)
+  asFunPorts <- funPortNames ps
+  return $ vcat $ map (\(a, b) -> a <+> pp MapTo <+> b <> comma) (zip asFunPorts asTopPorts)
+  -- Format fun bus name => top lvl name
 
+instParamsMap :: [(Ident, PrimVal)] -> Doc
+-- FIXME: This will produce non-working VHDL code because generics without a
+-- default value are left uninstantiated. Either set Decls with Nothing
+-- expression to 0 by default or assign a default value to generics in
+-- entities generated from external functions
+instParamsMap ps = vcat $ commas $ filter (not.isEmpty) $ map (\(i, e) ->
+                                          if e /= EmptyVal then
+                                             text i <+> pp MapTo <+> pp e
+                                          else empty) ps
 
 inst :: Instance -> Reader Network Doc
 inst Instance { instName = name
@@ -118,26 +150,31 @@ inst Instance { instName = name
               , inBusses = inbus
               , outBusses = outbus
               , instParams = params
-              } = return $ text name <> colon <+> pp Entity <+> text fun
-  $+$ pp PortMap <+> parens (indent ( empty
-                                      $+$ text "foo" <+> pp MapTo <+> text "bar"
-                                      $+$ text "baz" <+> pp MapTo <+> text "foo"
-                                      $+$ clockedMap
-                                    ) <> semi)
+              } = do
+  funDef <- findPred functions (\n -> funName n == fun) id
+  let funPorts = concat $ fromMaybe [] $ sequence [funInports <$> funDef, funOutports <$> funDef]
+  portMaps <- vcat <$> mapM instPortMap funPorts
+  let genMaps = instParamsMap params
+  return $ text name <> colon <+> pp Entity <+> pp Work <> text "." <> text fun
+    $+$ (if isEmpty genMaps then empty else pp GenericMap <+> parens genMaps)
+    $+$ pp PortMap <+> parens (indent ( portMaps
+                                        $+$ clockedMap
+                                      )) <> semi
+
+topBusPorts :: Bus -> Reader Network [Doc]
+topBusPorts b = do
+  nn <- asks netName
+  let bn = busName b
+  let bp = busPorts b
+  return $ map (\s -> underscores [nn, bn, s]) bp
 
 topPorts :: Reader Network Doc
 topPorts = do
-  sigdefs <- asks busses >>= mapM busSigs
-  return $ vcat sigdefs
-    where
-      busSigs :: Bus -> Reader Network Doc
-      busSigs b = do
-        nn <- asks netName
-        let bn = busName b
-        let bp = busPorts b
-        return $ vcat $ map (\s -> underscores [nn, bn, s]
-                                   <> colon <+> pp InOut <+> text "type"
-                            ) bp
+  sigdefs <- asks busses >>= mapM topBusPorts
+  return $ sigDefs $ concat sigdefs
+  where
+    sigDefs :: [Doc] -> Doc
+    sigDefs = vcat . map (\s -> s  <> colon <+> pp InOut <+> text "type")
 
 --topPortMap :: Reader Network Doc
 
@@ -146,8 +183,8 @@ makeTopLevel = do
   nname <- asks netName
   ports <- topPorts
   insts <- asks instances >>= mapM inst
-  return $ entity nname ports
-    $+$ architecture nname (text "signals") (vcat insts)
+  return $ entity nname ports empty
+    $+$ architecture nname (text "-- signals") (vcat insts)
 {-|
 
 Toplevel: in entity, for every bus referenced by instances
@@ -160,12 +197,13 @@ vhdlExt = flip (++) ".vhdl"
 makeFun :: Function -> Reader Network OutputFile
 makeFun f = do
   let fname = funName f
+  let generics = entGenerics f
   ports <- entPorts f
-  procc <- process fname (pp (funBody f))(vcat [ text "clk" <> comma , text "rst"])
+  procc <- process fname (pp (funBody f))(vcat [ text "clk" <> comma , text "rst" ])
   return OutputFile { dir = ""
                     , file = vhdlExt fname
                     , output = header
-                      $+$  entity fname ports
+                      $+$ entity fname ports generics
                       $+$ architecture fname empty procc
                     }
 
@@ -185,7 +223,7 @@ makeNetwork = do
                  }
     : OutputFile { dir = ""
                  , file = vhdlExt "sme_types"
-                 , output = systemTypes
+                  , output = smeTypes
                  }
     : outFuns
 

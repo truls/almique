@@ -9,6 +9,7 @@ module Almique.Binder
 import Control.Monad.Reader
 import Control.Monad.Except
 import qualified Data.Map.Strict as Map hiding (map)
+import qualified Data.Set as Set
 import Data.Maybe (isNothing, fromMaybe)
 import Data.List
 import Data.Monoid
@@ -20,6 +21,8 @@ import Debug.Trace
 
 type InstPorts = (Ident, ([Ident], [Ident]))
 type InstParams = (Ident, (DType, Ident))
+type VarTypes = Set.Set Variable
+
 type BindErr = String
 
 newtype BindM a = BindM { unBindM :: ExceptT BindErr (Reader A.AnState) a }
@@ -95,6 +98,35 @@ queryBusDef i f = do
 --checkBus :: Ident -> BindM Ident
 --checkBus b = queryBusDef b id >> return b
 
+-- Generate a set of all names that occur in process code. Used for propagating
+-- types down in the AST
+-- Consider the following:
+-- 1) Maybe this list should be moved into the BindM monad so that we don't have
+-- to explicitly pass it around from checkStmts
+-- 2) Maybe a map from names to types is better than a set of Variables?
+genNameSet :: Ident -> [(Ident, Ident)] -> [Decl] -> [Decl] -> BindM VarTypes
+genNameSet fName busNameMap localList params = do
+  busList <- concat <$> mapM busVars busNameMap
+  let decls = map declVars localList
+  let params' = map paramVars params
+  return $ Set.fromList busList <> Set.fromList decls <> Set.fromList params'
+  where
+    busVars :: (Ident, Ident) -> BindM [Variable]
+    busVars (l, n) = do
+      bus <- queryBusDef n id
+      let t = busDtype bus
+      return [BusVar t l p | p <- busPorts bus ]
+
+    declVars :: Decl -> Variable
+    declVars (Decl var _ _) = var
+
+    paramVars :: Decl -> Variable
+    -- TODO: Only supporting integer parameters for now. Extend this to
+    -- inferring parameter types based on parameter values in instantiations
+    paramVars (Decl (NamedVar AnyType n) _ _) = NamedVar (IntType 32) n
+    -- FIXME: Do something better here
+    paramVars (Decl v _ _) = v
+
 -- | For each function, check that all variables in function bodies are defined
 -- verify that variable kinds are correct. Furthermore, we should infer the
 -- the variable kinds being used
@@ -108,8 +140,12 @@ bindFunction ps = trace (show ps) $ do
   inPorts <- queryIS A.mappedInBusses (`zip` inPortTypes) -- >>= mapM checkBus
   outPorts <- queryIS A.mappedOutBusses (`zip` outPortTypes) -- >>= mapM checkBus
   funParams' <- map mapFunParam <$> queryIS A.params id -- >>= genFunParam
-  (funBody', funVars) <- queryFunCurIS funBody >>= checkStmts
+  allLocals <- queryIS A.bindings Map.toList >>= mapM (mapBinding [])
+  nameSet <- genNameSet funName' (inPorts ++ outPorts)
+    (fromMaybe [] (sequence allLocals)) funParams'
+  (funBody', funVars) <- queryFunCurIS funBody >>= checkStmts nameSet
   --funBody'' <- queryFunCurIS funBody
+
   -- FIXME: Using toList feels like a bad idea
   locals' <- queryIS A.bindings Map.toList >>= mapM (mapBinding funVars)
   return Function { funName = funName'
@@ -149,8 +185,8 @@ bindFunction ps = trace (show ps) $ do
 --        let free = fromMaybe False (snd <$> binding)
         case binding of
           -- The hack is here
-          foo@(Just (_, Var{})) -> trace (show foo) $ return Nothing
-          foo@(Just (t, v)) -> trace (show foo) $ return $ case i of
+          (Just (_, Var{})) -> return Nothing
+          (Just (t, v)) -> return $ case i of
                                    BusVar _ _ _ -> Just $ Decl i t $ Just v
                                    ConstVar _ _ -> Just $ Decl i t $ Just v
                                    ParamVar _ _ -> Just $ Decl i t $ Just v
@@ -169,38 +205,51 @@ bindFunction ps = trace (show ps) $ do
 -- | Map a function over Stmts and accumulate the transformed statements and
 -- the the list of variables being assigned to (=modified) by the
 -- statements. We use this to infer variable constness.
-checkStmts :: Stmts -> BindM (Stmts, [Variable])
-checkStmts (Stmts (Cond cs e:rest)) = do
+checkStmts :: VarTypes -> Stmts -> BindM (Stmts, [Variable])
+checkStmts vts (Stmts (Cond cs e:rest)) = do
   let (es, ss) = unzip cs
-  es' <- mapM checkExpr es
-  (ss', vs) <- mapAndUnzipM checkStmts ss
-  (e', ve) <- checkStmts e
-  rest' <- checkStmts $ Stmts rest
+  es' <- mapM (checkExpr vts) es
+  (ss', vs) <- mapAndUnzipM (checkStmts vts) ss
+  (e', ve) <- checkStmts vts e
+  rest' <- checkStmts vts $ Stmts rest
   return $ (Stmts [Cond (zip es' ss') e'], ve ++ concat vs) <> rest'
-checkStmts (Stmts s) =
-  mapM checkStmt s >>=
+checkStmts vs (Stmts s) =
+  mapM (checkStmt vs) s >>=
   foldM (\(stmts, vars) (stmt, var) ->
            return ( stmts <> Stmts [stmt]
                   , vars <> fromMaybe [] ((: []) <$> var))
         )
   (mempty, mempty)
 
-checkStmt :: Stmt -> BindM (Stmt, Maybe Variable)
-checkStmt s@(Assign v e) = do
-  e' <- checkExpr e
-  return (Assign v e', Just v)
-checkStmt s = return (s, Nothing)
+checkStmt :: VarTypes -> Stmt -> BindM (Stmt, Maybe Variable)
+checkStmt vs (Assign v e) = do
+  e' <- checkExpr vs e
+  v' <- checkVar vs v
+  return (Assign v' e', Just v)
+checkStmt _ s = return (s, Nothing)
 
-checkExpr :: Expr -> BindM Expr
-checkExpr BinOp { op = o
-                , left = l
-                , right = r } = BinOp <$> pure o <*> checkExpr l <*> checkExpr r
-checkExpr UnOp { unOp = o
-               , unOpVal = v } = UnOp <$> pure o <*> checkExpr v
-checkExpr p@Prim{} = return p
-checkExpr (Var v) = Var <$> checkVar v
-checkExpr (Paren e) = Paren <$> checkExpr e
-checkExpr n@NopExpr = return n
+checkExpr :: VarTypes -> Expr -> BindM Expr
+checkExpr vs BinOp { op = o
+                   , left = l
+                   , right = r } = BinOp <$> pure o <*> checkExpr vs l <*> checkExpr vs r
+checkExpr vs UnOp { unOp = o
+                  , unOpVal = v } = UnOp <$> pure o <*> checkExpr vs v
+checkExpr vs (Paren e) = Paren <$> checkExpr vs e
+checkExpr vs (Var v) = Var <$> checkVar vs v
+checkExpr _ p@Prim{} = return p
+checkExpr _ n@NopExpr = return n
+
+setType :: VarTypes -> Variable -> BindM Variable
+setType vs v = do
+  let varType = typeOf <$> Set.lookupLE v vs
+  varType' <- case varType of
+                Just t -> return t
+                Nothing -> throwError $ "Undefined variable  " ++ show v
+  case v of
+    (ConstVar _ n) -> return $ ConstVar varType' n
+    (ParamVar _ n) -> return $ ParamVar varType' n
+    (NamedVar _ n) -> return $ NamedVar varType' n
+    (BusVar _ n n') -> return $ BusVar varType' n n'
 
 {- TODO:
 - Check variable bindings. If variable is resolved to a function
@@ -211,13 +260,11 @@ checkExpr n@NopExpr = return n
   somewhere, maybe defaulting to constant and then change to regular variables
   if assigned to or updated.
 -}
-checkVar :: Variable -> BindM Variable
-checkVar v@(ConstVar _ _) = return v
-checkVar v@(ParamVar _ _) = return v
-checkVar v@(NamedVar _ _n) = do
+checkVar :: VarTypes -> Variable -> BindM Variable
+checkVar vs v@(NamedVar _ _n) = setType vs =<< do
   binding <- lookupBinding v
   case binding of
-    Just (t, Var nv@(NamedVar _ n)) -> do
+    Just (_t, Var nv@(NamedVar _ n)) -> do
       isParam <- resolveFree nv
       if isParam then
         return $ ParamVar (typeOf nv) n
@@ -225,7 +272,7 @@ checkVar v@(NamedVar _ _n) = do
         return v
     Just _ -> return v
     Nothing -> return v
-checkVar v@BusVar {}  = return v
+checkVar vs v = setType vs v
 
 -- | For each instance of Functions, check that the instantiation parameters
 -- causes all dependent variables of the function being instantiated to become

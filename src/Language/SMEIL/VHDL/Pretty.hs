@@ -3,6 +3,7 @@ module Language.SMEIL.VHDL.Pretty
        , unindent
        , blank
        , underscores
+       , commas
        , Pretty
        , pp
        , VHDLKw(..)
@@ -30,6 +31,9 @@ blank = text ""
 
 underscores :: [Ident] -> Doc
 underscores is = hcat $ punctuate (text "_") (map text is)
+
+commas :: [Doc] -> [Doc]
+commas = punctuate comma
 
 data VHDLKw = Entity
             | Architecture
@@ -62,6 +66,10 @@ data VHDLKw = Entity
             | Downto
             | StdLogicVec Int Int
             | StdLogic
+            | Work
+            | Integer
+            | Generic
+            | GenericMap
             deriving Show
 
 data VHDLFuns = RisingEdge Doc
@@ -93,6 +101,13 @@ instance Pretty SMENum where
 instance Pretty SMEBool where
   pp SMETrue = text "true"
   pp SMEFalse = text "false"
+
+instance Pretty DType where
+  pp (IntType l) = text "i" <> pp l <> text "_t"
+  pp (UIntType l) = text "u" <> pp l <> text "_t"
+  pp (FloatType l) = text "f" <> pp l <> text "_t"
+  pp BoolType = text "bool_t"
+  pp AnyType = text "ANY_TYPE"
 
 instance Pretty Variable where
   pp (ParamVar t v) = text v
@@ -174,4 +189,5 @@ instance Pretty VHDLKw where
   pp ShiftRight = text "shift_right"
   pp (StdLogicVec i j) = text "std_logic_vector" <> parens (pp i <+> pp Downto <+> pp j)
   pp StdLogic = text "std_logic"
+  pp GenericMap = pp Generic <+> text "map"
   pp r = text $ map toLower (show r)

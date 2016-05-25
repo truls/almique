@@ -4,7 +4,7 @@ module Language.SMEIL.VHDL.Snippets
        , clockedSignals
        , clockedMap
        , csvUtil
-       , systemTypes
+       , smeTypes
        )
        where
 
@@ -44,8 +44,8 @@ clockedMap = empty $+$ text "rst => rst," $+$ text "clk => clk"
 --   $+$ pp Package <+> text "SYSTEM_TYPES" <+> Is
 --   $+$ indent ( pp Subtype <+> text "T_SYSTEM_BOOL" <+> 
 
-systemTypes :: Doc
-systemTypes = text [r|library ieee;
+smeTypes :: Doc
+smeTypes = text [r|library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 
