@@ -1,3 +1,5 @@
+{-# LANGUAGE TypeSynonymInstances, FlexibleInstances #-}
+
 module Language.SMEIL.VHDL.Pretty
        ( indent
        , unindent
@@ -75,19 +77,31 @@ data VHDLKw = Entity
 data VHDLFuns = RisingEdge Doc
               | StdLogicVector Doc
               | ToUnsigned Doc Doc
+              | ToSigned Doc Doc
               | Unsigned Doc
+              | Signed Doc
 
 instance Pretty VHDLFuns where
   pp (RisingEdge d) = text "rising_edge" <> parens d
-  pp (StdLogicVector d) = text "std_logic_vector" <> parens d
+  pp (StdLogicVector d) = text "std_logic_vector" <> parens (d <> comma <+> pp l)
   pp (ToUnsigned d1 d2) = text "to_unsigned" <> parens (d1 <> comma <> space <> d2)
+  pp (ToSigned d1 d2) = text "to_signed" <> parens (d1 <> comma <> space <> d2)
   pp (Unsigned d) = text "unsigned" <> parens d
+  pp (Signed d) = text "signed" <> parens d
 
 class Pretty a where
   pp :: a -> Doc
 
 instance Pretty Int where
   pp n = integer $ fromIntegral n
+
+instance Pretty String where
+  pp = text
+
+primCast :: PrimVal -> Doc
+primCast (Num i@(SMEInt _)) = pp $ ToSigned (pp i) (integer 32)
+primCast (Num f@(SMEFloat _)) = pp f
+primCast o = pp o
 
 instance Pretty PrimVal where
   pp (Num n) = pp n
@@ -118,10 +132,17 @@ instance Pretty Variable where
 instance Pretty Stmts where
   pp (Stmts s) = vcat $ map pp s
 
+assignCast :: DType -> Doc -> Doc
+assignCast (IntType _) d = pp $ StdLogicVector d
+assignCast (UIntType _) d = pp $ StdLogicVector d
+assignCast (FloatType l) d = pp "-- Floats not supported" <+> d
+assignCast BoolType d = pp "-- Bools not supported" <+> d
+assignCast AnyType d = d
+
 instance Pretty Stmt where
   pp (Assign v e) = case v of
-    n@(NamedVar _ _) -> pp n <+> pp Gets <+> pp e
-    n@(BusVar _ _ _) -> pp n <+> pp BusGets <+> pp e
+    n@(NamedVar t _) -> pp n <+> pp Gets <+> assignCast t (pp e)
+    n@(BusVar t _ _) -> pp n <+> pp BusGets <+> assogmCast t (pp e_
     (ConstVar _ _) -> text "-- Assignment to constvar attempted"
     (ParamVar _ _) -> text "-- Assignment to generic value"
   pp (Cond ((e, s):cs) es) = pp If <+> pp e <+> pp Then $+$
@@ -135,6 +156,13 @@ instance Pretty Stmt where
 
   pp (Cond [] _) = empty
   pp NopStmt = text ";"
+
+varCast :: DType -> Doc -> Doc
+varCast (IntType _) d = pp $ Signed d
+varCast (UIntType _) d = pp $ Unsigned d
+varCast (FloatType _) d = pp "-- Floats not supported" <+> d
+varCast BoolType d = pp "-- Bools not supported" <+> d
+varCast AnyType d = d
 
 instance Pretty Expr where
   pp BinOp { op = SLOp
@@ -152,8 +180,9 @@ instance Pretty Expr where
   pp UnOp { unOp = u
           , unOpVal = v
           } = pp u <+> pp v
-  pp (Prim p) = pp p
-  pp (Var v) = pp v
+  pp (Prim p) = primCast p
+  pp (Var v@ParamVar{}) = pp v
+  pp (Var v) = varCast (typeOf v) $ pp v
   pp (Paren e) = parens $ pp e
   pp NopExpr = empty
 

@@ -79,13 +79,15 @@ funPortNames (n, t) = do
 -- |Generates a list of input and output ports
 entPorts :: Function -> Reader Network Doc
 entPorts Function { funInports = ins
-                  , funOutports = outs } = vcat <$> sequence (map (ports Out) outs ++ map (ports In) ins)
+                  , funOutports = outs } = vcat <$> sequence (map (ports Out) outs
+                                                              ++ map (ports In) ins)
   where
     ports :: VHDLKw -> (Ident, Ident) -> Reader Network Doc
     ports d ps = do
       names <- funPortNames ps
+      bt <- fromMaybe AnyType <$> findPred busses (\bn -> fst ps == busName bn) busDtype
       return $ vcat $
-        map (\s -> s <> colon <+> pp d <+> text "type" <> semi) names
+        map (\s -> s <> colon <+> pp d <+> pp bt <> semi) names
 
 -- TODO: Support other types than integer here
 entGenerics :: Function -> Doc
@@ -131,7 +133,7 @@ instPortMap ps = do
   bus <- findPred busses (\s -> snd ps == busName s) id
   asTopPorts <- fromMaybe (return []) (topBusPorts <$> bus)
   asFunPorts <- funPortNames ps
-  return $ vcat $ map (\(a, b) -> a <+> pp MapTo <+> b <> comma) (zip asFunPorts asTopPorts)
+  return $ vcat $ map (\(a, b) -> a <+> pp MapTo <+> b <> comma) (zip asFunPorts (map fst asTopPorts))
   -- Format fun bus name => top lvl name
 
 instParamsMap :: [(Ident, PrimVal)] -> Doc
@@ -161,20 +163,21 @@ inst Instance { instName = name
                                         $+$ clockedMap
                                       )) <> semi
 
-topBusPorts :: Bus -> Reader Network [Doc]
+topBusPorts :: Bus -> Reader Network [(Doc, Doc)]
 topBusPorts b = do
   nn <- asks netName
   let bn = busName b
   let bp = busPorts b
-  return $ map (\s -> underscores [nn, bn, s]) bp
+  let bt = busDtype b
+  return $ map (\s -> (underscores [nn, bn, s], pp bt)) bp
 
 topPorts :: Reader Network Doc
 topPorts = do
   sigdefs <- asks busses >>= mapM topBusPorts
   return $ sigDefs $ concat sigdefs
   where
-    sigDefs :: [Doc] -> Doc
-    sigDefs = vcat . map (\s -> s  <> colon <+> pp InOut <+> text "type")
+    sigDefs :: [(Doc, Doc)] -> Doc
+    sigDefs = vcat . map (\(s, t) -> s  <> colon <+> pp InOut <+> t <> semi)
 
 --topPortMap :: Reader Network Doc
 
