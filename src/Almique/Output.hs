@@ -85,14 +85,14 @@ entPorts Function { funInports = ins
     ports :: VHDLKw -> (Ident, Ident) -> Reader Network Doc
     ports d ps = do
       names <- funPortNames ps
-      bt <- fromMaybe AnyType <$> findPred busses (\bn -> fst ps == busName bn) busDtype
+      bt <- fromMaybe AnyType <$> findPred busses (\bn -> snd ps == busName bn) busDtype
       return $ vcat $
         map (\s -> s <> colon <+> pp d <+> pp bt <> semi) names
 
 -- TODO: Support other types than integer here
 entGenerics :: Function -> Doc
 entGenerics Function { funParams = p } =
-  vcat $ punctuate comma $ map (\v -> pp v <> colon <+> pp Integer) (getVars p)
+  vcat $ punctuate semi $ map (\v -> pp v <> colon <+> pp Integer) (getVars p)
   where
     getVars vs = [ v | (Decl v _ _) <- vs ]
 
@@ -104,24 +104,41 @@ architecture s signals body = pp Architecture <+> text "RTL" <+> pp Of <+> text 
   $+$ pp EndArchitecture <> semi
 
 makeVarVal :: Maybe Expr -> Doc
-makeVarVal v = fromMaybe empty ((\e -> space <> pp Gets <+> pp e) <$> v)
+makeVarVal v = fromMaybe empty ((\e -> space <> pp Gets <+> assignCast (typeOf e) (pp e)) <$> v)
 
 makeVar :: Decl -> Doc
 makeVar (Decl (NamedVar ty n) t v) = pp Variable <+> text n <> colon
-  <+> text "type" <> makeVarVal v <> semi
+  <+> pp t  <> makeVarVal v <> semi
 makeVar (Decl (ConstVar ty n) t v) = pp Constant <+> text n <> colon
-  <+> text "type" <> makeVarVal v <> semi
+  <+> pp t <> makeVarVal v <> semi
+makeVar _ = empty
+
+funSignalReset :: (Ident, Ident) -> Reader Network Doc
+funSignalReset p@(n, t) = do
+  busT <- fromMaybe AnyType <$> findPred busses (\bn -> t == busName bn) busDtype
+  portNames <- funPortNames p
+  -- FIXME: Maybe its better to generate SMEIL here and pretty print it?
+  return $ vcat $ map (\p -> p <+> pp BusGets <+> primDefaultVal busT <> semi) portNames
+
+funVarReset :: Decl -> Doc
+funVarReset (Decl v@(NamedVar ty n) _ _) = pp v <+> pp Gets <+> primDefaultVal ty <> semi
+funVarReset (Decl (ConstVar ty n) t v) = empty
+funVarReset _ = empty
 
 process :: Ident -> FunBody -> SensitivityList -> Reader Network Doc
 process fname body sensitivity = do
   -- XXX: Why not pass function from caller?
   vars <- fromMaybe [] <$> findPred functions (\s -> fname == funName s) locals
+  fun <- fromMaybe [] <$> findPred functions (\s -> fname == funName s) funOutports
+  sigResets <- vcat <$> mapM funSignalReset fun
+  let varResets = vcat $ map funVarReset vars
   return (pp Process <+> parens ( empty $+$ sensitivity )
           -- TODO: Split definitions on constants and variables
           $+$ vcat (map makeVar vars)
           $+$ pp Begin
           $+$ indent (pp If <+> text "rst = '1'" <+> pp Then
-                      $+$ indent (text "-- Reset stuff goes here")
+                      $+$ indent (sigResets
+                                  $+$ varResets)
                       $+$ pp Elsif <+> pp (RisingEdge (text "clk")) <+> pp Then
                       $+$ indent body
                       $+$ pp EndIf <> semi
@@ -154,7 +171,8 @@ inst Instance { instName = name
               , instParams = params
               } = do
   funDef <- findPred functions (\n -> funName n == fun) id
-  let funPorts = concat $ fromMaybe [] $ sequence [funInports <$> funDef, funOutports <$> funDef]
+  let funPorts = concat $ fromMaybe [] $ sequence [ toRealBus inbus . funInports <$> funDef
+                                                  , toRealBus outbus . funOutports <$> funDef]
   portMaps <- vcat <$> mapM instPortMap funPorts
   let genMaps = instParamsMap params
   return $ text name <> colon <+> pp Entity <+> pp Work <> text "." <> text fun
@@ -162,6 +180,8 @@ inst Instance { instName = name
     $+$ pp PortMap <+> parens (indent ( portMaps
                                         $+$ clockedMap
                                       )) <> semi
+    where
+      toRealBus bs ps = [(fst p, b) | (b, p) <- zip bs ps]
 
 topBusPorts :: Bus -> Reader Network [(Doc, Doc)]
 topBusPorts b = do
@@ -179,8 +199,6 @@ topPorts = do
     sigDefs :: [(Doc, Doc)] -> Doc
     sigDefs = vcat . map (\(s, t) -> s  <> colon <+> pp InOut <+> t <> semi)
 
---topPortMap :: Reader Network Doc
-
 makeTopLevel :: Reader Network Doc
 makeTopLevel = do
   nname <- asks netName
@@ -188,6 +206,7 @@ makeTopLevel = do
   insts <- asks instances >>= mapM inst
   return $ entity nname ports empty
     $+$ architecture nname (text "-- signals") (vcat insts)
+
 {-|
 
 Toplevel: in entity, for every bus referenced by instances

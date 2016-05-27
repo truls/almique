@@ -90,7 +90,20 @@ queryBusDef i f = do
   el <- asks A.busses
   case Map.lookup i el of
     Just v -> return $ f v
-    Nothing -> throwError $ "Reference to undefined bus" ++ i
+    Nothing -> case busByName $ Map.elems el of
+      Just v -> return $ f v
+      Nothing -> throwError $ "Reference to undefined bus " ++ i
+    where
+      -- HACK: since the map of busses maps from the variable name that
+      -- the busses were originally defined by in python, rather than the actual
+      -- name of the bus. Therefore, we query first varNames and then their real
+      -- names
+      busByName :: [Bus] -> Maybe Bus
+      busByName (b:bs) = if busName b == i then
+                             Just b
+                           else
+                             busByName bs
+      busByName [] = Nothing
 
 -- FIXME: Querying a bus just to see if queryBusDef will throw an
 -- error... Is this bad?
@@ -109,7 +122,8 @@ genNameSet fName busNameMap localList params = do
   busList <- concat <$> mapM busVars busNameMap
   let decls = map declVars localList
   let params' = map paramVars params
-  return $ Set.fromList busList <> Set.fromList decls <> Set.fromList params'
+  let set = Set.fromList busList <> Set.fromList decls <> Set.fromList params'
+  return $ (trace (show set ++ show fName)) set
   where
     busVars :: (Ident, Ident) -> BindM [Variable]
     busVars (l, n) = do
@@ -206,27 +220,24 @@ bindFunction ps = trace (show ps) $ do
 -- the the list of variables being assigned to (=modified) by the
 -- statements. We use this to infer variable constness.
 checkStmts :: VarTypes -> Stmts -> BindM (Stmts, [Variable])
-checkStmts vts (Stmts (Cond cs e:rest)) = do
+checkStmts vs (Stmts s) =
+  mapM (checkStmt vs) s >>= foldM (\(stmts, vars) (stmt, var) ->
+                                      return ( stmts <> Stmts [stmt]
+                                             , vars <> var))
+                            (mempty, mempty)
+
+checkStmt :: VarTypes -> Stmt -> BindM (Stmt, [Variable])
+checkStmt vts (Cond cs e) = do
   let (es, ss) = unzip cs
   es' <- mapM (checkExpr vts) es
   (ss', vs) <- mapAndUnzipM (checkStmts vts) ss
   (e', ve) <- checkStmts vts e
-  rest' <- checkStmts vts $ Stmts rest
-  return $ (Stmts [Cond (zip es' ss') e'], ve ++ concat vs) <> rest'
-checkStmts vs (Stmts s) =
-  mapM (checkStmt vs) s >>=
-  foldM (\(stmts, vars) (stmt, var) ->
-           return ( stmts <> Stmts [stmt]
-                  , vars <> fromMaybe [] ((: []) <$> var))
-        )
-  (mempty, mempty)
-
-checkStmt :: VarTypes -> Stmt -> BindM (Stmt, Maybe Variable)
+  return (Cond (zip es' ss') e', ve ++ concat vs)
 checkStmt vs (Assign v e) = do
   e' <- checkExpr vs e
   v' <- checkVar vs v
-  return (Assign v' e', Just v)
-checkStmt _ s = return (s, Nothing)
+  return (Assign v' e', [v])
+checkStmt _ s = return (s, [])
 
 checkExpr :: VarTypes -> Expr -> BindM Expr
 checkExpr vs BinOp { op = o
@@ -328,11 +339,12 @@ bindInstance A.NewInst { A.instBindings = bindings
 -- genParamTYpe :: Instance -> Bind InstParams
 -- genparamTYpe Instance { instParmas = params
 
-genPortMap :: Instance -> BindM InstPorts
+genPortMap :: Instance -> InstPorts
 genPortMap Instance { instFun = fun
                     , inBusses = ins
                     , outBusses = outs
-                    } = return (fun, (ins, outs))
+                    } = (fun, (ins, outs))
+
   -- TODO: Fix the following by introducing bus "traits" describing the ports of
   -- busses and their types
   -- do
@@ -364,7 +376,7 @@ bindNetwork :: BindM Network
 bindNetwork = do
   busList <- Map.elems <$> asks A.busses
   insts <- Map.elems <$> asks A.instances >>= mapM bindInstance
-  instPorts <- mapM genPortMap insts >>= unifyPorts
+  instPorts <- unifyPorts $ map genPortMap insts
   funs <- Map.elems <$> asks A.funStates >>= mapM (`withCurBlock` bindFunction instPorts)
   netName' <- asks A.netName
   return Network { functions = funs
@@ -375,8 +387,3 @@ bindNetwork = do
 
 bindPyMod :: A.AnState -> Either BindErr Network
 bindPyMod s = runBindM s bindNetwork
-
--- We wish to map function parameters to VHDL generics. In order to make sure
--- that we have "safe passage" we need to check that all parameters of the
--- processes will be made bound by the parameters given at the time of process
--- instantiation.

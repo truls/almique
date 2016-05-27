@@ -20,7 +20,7 @@ use ieee.std_logic_unsigned.all;
 use ieee.numeric_std.all;
 
 library sme_types;
-use work.sem_types.all;
+use work.sme_types.all;
 
 |]
 
@@ -31,6 +31,8 @@ clockedSignals = text [r|-- Reset signal
   -- Clock signal
   clk: std_logic;
 |]
+
+
 
 clockedMap :: Doc
 clockedMap = empty $+$ text "rst => rst," $+$ text "clk => clk"

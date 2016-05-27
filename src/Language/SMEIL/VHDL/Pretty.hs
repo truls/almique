@@ -6,6 +6,10 @@ module Language.SMEIL.VHDL.Pretty
        , blank
        , underscores
        , commas
+       , primCast
+       , primDefaultVal
+       , assignCast
+       , varCast
        , Pretty
        , pp
        , VHDLKw(..)
@@ -80,14 +84,21 @@ data VHDLFuns = RisingEdge Doc
               | ToSigned Doc Doc
               | Unsigned Doc
               | Signed Doc
+              | Resize Doc Int
 
 instance Pretty VHDLFuns where
   pp (RisingEdge d) = text "rising_edge" <> parens d
-  pp (StdLogicVector d) = text "std_logic_vector" <> parens (d <> comma <+> pp l)
+  pp (StdLogicVector d) = text "std_logic_vector" <> parens d
   pp (ToUnsigned d1 d2) = text "to_unsigned" <> parens (d1 <> comma <> space <> d2)
   pp (ToSigned d1 d2) = text "to_signed" <> parens (d1 <> comma <> space <> d2)
   pp (Unsigned d) = text "unsigned" <> parens d
   pp (Signed d) = text "signed" <> parens d
+  pp (Resize d i) = text "resize" <> parens (d <> comma <+> pp i)
+
+data VHDLAttribs = Length Doc
+
+instance Pretty VHDLAttribs where
+  pp (Length d) = d <> pp "'length"
 
 class Pretty a where
   pp :: a -> Doc
@@ -98,8 +109,16 @@ instance Pretty Int where
 instance Pretty String where
   pp = text
 
+primDefaultVal :: DType -> Doc
+primDefaultVal t@(IntType _) = assignCast t (pp $ ToSigned (pp "0") (pp $ Length (pp t)))
+primDefaultVal t@(UIntType _) = assignCast t (pp $ ToUnsigned (pp "0") (pp $ Length (pp t)))
+primDefaultVal (FloatType _)  = pp "0.0"
+primDefaultVal BoolType = pp "'0'"
+primDefaultVal AnyType = empty
+--primDefaultVal t@(SMEInt l) -> assignCast t $ ToSigned (pp 0) (pp l)
+
 primCast :: PrimVal -> Doc
-primCast (Num i@(SMEInt _)) = pp $ ToSigned (pp i) (integer 32)
+primCast (Num i@(SMEInt _l)) = pp $ ToSigned (pp i) (pp $ Length (pp $ typeOf i))
 primCast (Num f@(SMEFloat _)) = pp f
 primCast o = pp o
 
@@ -124,10 +143,10 @@ instance Pretty DType where
   pp AnyType = text "ANY_TYPE"
 
 instance Pretty Variable where
-  pp (ParamVar t v) = text v
-  pp (ConstVar t v) = text v
-  pp (NamedVar t v) = text v
-  pp (BusVar t i v) = text $ i ++ "_" ++ v
+  pp (ParamVar _t v) = text v
+  pp (ConstVar _t v) = text v
+  pp (NamedVar _t v) = text v
+  pp (BusVar _t i v) = text $ i ++ "_" ++ v
 
 instance Pretty Stmts where
   pp (Stmts s) = vcat $ map pp s
@@ -135,14 +154,14 @@ instance Pretty Stmts where
 assignCast :: DType -> Doc -> Doc
 assignCast (IntType _) d = pp $ StdLogicVector d
 assignCast (UIntType _) d = pp $ StdLogicVector d
-assignCast (FloatType l) d = pp "-- Floats not supported" <+> d
+assignCast (FloatType _l) d = pp "-- Floats not supported" <+> d
 assignCast BoolType d = pp "-- Bools not supported" <+> d
 assignCast AnyType d = d
 
 instance Pretty Stmt where
   pp (Assign v e) = case v of
-    n@(NamedVar t _) -> pp n <+> pp Gets <+> assignCast t (pp e)
-    n@(BusVar t _ _) -> pp n <+> pp BusGets <+> assogmCast t (pp e_
+    n@(NamedVar t _) -> pp n <+> pp Gets <+> assignCast t (pp e) <> semi
+    n@(BusVar t _ _) -> pp n <+> pp BusGets <+> assignCast t (pp e) <> semi
     (ConstVar _ _) -> text "-- Assignment to constvar attempted"
     (ParamVar _ _) -> text "-- Assignment to generic value"
   pp (Cond ((e, s):cs) es) = pp If <+> pp e <+> pp Then $+$
@@ -173,6 +192,10 @@ instance Pretty Expr where
            , left = l
            , right = r
            } = pp ShiftRight <> parens (pp l <> comma <+> pp r)
+  pp BinOp { op = o@MulOp
+           , left = l
+           , right = r
+           } = pp $ Resize (pp l <+> pp o <+> pp r) 32
   pp BinOp { op = p
            , left = l
            , right = r

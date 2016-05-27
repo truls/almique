@@ -495,9 +495,9 @@ genNetwork name stm = when (funName "wire" stm) (mapBlockStms networkDef stm)
       ports <- stringifyList parlist
       addBindingIS (SMEIL.BusVar SMEIL.AnyType varName "") (Bound SMEIL.AnyType SMEIL.NopExpr)
       addBus varName SMEIL.Bus { SMEIL.busName = unquote bname
-                               , SMEIL.busDtype = smetype
-                               , SMEIL.busPorts = ports
-                               }
+                          , SMEIL.busDtype = smetype
+                          , SMEIL.busPorts = ports
+                          }
     networkDef (PClassAssign varName (PVarIdent instof)
                 ( ArgExpr { arg_expr = PString1 iname }
                   : ArgExpr { arg_expr = inbusses }
