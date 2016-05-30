@@ -17,7 +17,7 @@ import Data.Monoid
 import Language.SMEIL
 import qualified Almique.Analyzer as A
 
-import Debug.Trace
+--import Debug.Trace
 
 type InstPorts = (Ident, ([Ident], [Ident]))
 type InstParams = (Ident, (DType, Ident))
@@ -94,9 +94,9 @@ queryBusDef i f = do
       Just v -> return $ f v
       Nothing -> throwError $ "Reference to undefined bus " ++ i
     where
-      -- HACK: since the map of busses maps from the variable name that
-      -- the busses were originally defined by in python, rather than the actual
-      -- name of the bus. Therefore, we query first varNames and then their real
+      -- HACK: The map of busses maps from the variable name that busses were
+      -- originally assigned to in the python code rather than the actual name
+      -- of the bus. Therefore, we query first varNames and then their real
       -- names
       busByName :: [Bus] -> Maybe Bus
       busByName (b:bs) = if busName b == i then
@@ -122,8 +122,7 @@ genNameSet fName busNameMap localList params = do
   busList <- concat <$> mapM busVars busNameMap
   let decls = map declVars localList
   let params' = map paramVars params
-  let set = Set.fromList busList <> Set.fromList decls <> Set.fromList params'
-  return $ (trace (show set ++ show fName)) set
+  return $ Set.fromList busList <> Set.fromList decls <> Set.fromList params'
   where
     busVars :: (Ident, Ident) -> BindM [Variable]
     busVars (l, n) = do
@@ -145,7 +144,7 @@ genNameSet fName busNameMap localList params = do
 -- verify that variable kinds are correct. Furthermore, we should infer the
 -- the variable kinds being used
 bindFunction :: [InstPorts] -> BindM Function
-bindFunction ps = trace (show ps) $ do
+bindFunction ps = do
   -- FIXME: Most of these mappings (and by extension the entire FunInterpState
   -- type) ended up being rather pointless.
   funName' <- queryFunCurIS funName
@@ -360,7 +359,7 @@ genPortMap Instance { instFun = fun
 -- TODO: Compare bus "kinds", where the "kind" of a bus is the ports of a bus and their types.
 unifyPorts :: [InstPorts] -> BindM [InstPorts]
 -- FIXME: Is partial function (fst) usage safe here?
-unifyPorts ps = trace (show ps) foldM merge [] (sortOn fst ps)
+unifyPorts ps = foldM merge [] (sortOn fst ps)
   where
     merge :: [InstPorts] -> InstPorts -> BindM [InstPorts]
     merge ips@(ip@(i, (ob, ib)):_) ip'@(i', (ob', ib'))

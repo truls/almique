@@ -8,6 +8,7 @@ module Almique.Output
 import Text.PrettyPrint
 import Control.Monad.Reader
 import Data.Maybe (fromMaybe, isNothing)
+import Data.List (sort)
 
 import System.Directory
 
@@ -58,6 +59,9 @@ findPred n p f = asks n >>= pure . locate
 -- ppIf :: Bool -> Doc -> Doc
 -- ppIf c d = if c then d else empty
 
+labelBlock :: Ident -> Doc -> Doc
+labelBlock i d = pp i <> colon <+> d
+
 entity :: Ident -> PortList -> GenericDefs -> Doc
 entity s d g = pp Entity <+> text s <+> pp Is
   $+$ indent ((if isEmpty g then empty else pp Generic <+> parens g <> semi)
@@ -107,22 +111,22 @@ makeVarVal :: Maybe Expr -> Doc
 makeVarVal v = fromMaybe empty ((\e -> space <> pp Gets <+> assignCast (typeOf e) (pp e)) <$> v)
 
 makeVar :: Decl -> Doc
-makeVar (Decl (NamedVar ty n) t v) = pp Variable <+> text n <> colon
+makeVar (Decl (NamedVar _ty n) t v) = pp Variable <+> text n <> colon
   <+> pp t  <> makeVarVal v <> semi
-makeVar (Decl (ConstVar ty n) t v) = pp Constant <+> text n <> colon
+makeVar (Decl (ConstVar _ty n) t v) = pp Constant <+> text n <> colon
   <+> pp t <> makeVarVal v <> semi
 makeVar _ = empty
 
 funSignalReset :: (Ident, Ident) -> Reader Network Doc
-funSignalReset p@(n, t) = do
+funSignalReset p@(_, t) = do
   busT <- fromMaybe AnyType <$> findPred busses (\bn -> t == busName bn) busDtype
   portNames <- funPortNames p
   -- FIXME: Maybe its better to generate SMEIL here and pretty print it?
-  return $ vcat $ map (\p -> p <+> pp BusGets <+> primDefaultVal busT <> semi) portNames
+  return $ vcat $ map (\a -> a <+> pp BusGets <+> primDefaultVal busT <> semi) portNames
 
 funVarReset :: Decl -> Doc
-funVarReset (Decl v@(NamedVar ty n) _ _) = pp v <+> pp Gets <+> primDefaultVal ty <> semi
-funVarReset (Decl (ConstVar ty n) t v) = empty
+funVarReset (Decl v@(NamedVar ty _) _ _) = pp v <+> pp Gets <+> primDefaultVal ty <> semi
+funVarReset (Decl (ConstVar _ty _n) _t _v) = empty
 funVarReset _ = empty
 
 process :: Ident -> FunBody -> SensitivityList -> Reader Network Doc
@@ -207,6 +211,76 @@ makeTopLevel = do
   return $ entity nname ports empty
     $+$ architecture nname (text "-- signals") (vcat insts)
 
+tbSigDefs :: Reader Network [Doc]
+tbSigDefs = do
+  sigs <- asks busses >>= mapM topBusPorts
+  return $ map (\(n, t) -> pp Signal <+> n <> colon <+> t <> semi) (concat sigs)
+
+--tbSigMaps :: Reader Network [Doc]
+--tbSigMaps 
+
+tbBuss :: Reader Network [Doc]
+tbBuss = do
+  a <- asks busses >>= mapM topBusPorts
+  -- HACK: We need trace file busses to be in alphabetical order to match trace
+  -- CSV file header fields and Doc isn't an instance of Ord. We cant move this
+  -- to the more general functions since alphabetical ordering of signals
+  -- probably isn't ideal everywhere.
+  return $ map text $ sort $ map (render . fst) $ concat a
+
+tbSigMaps :: Reader Network [Doc]
+tbSigMaps = map (\n -> n <+> pp MapTo <+> n <> comma) <$> tbBuss
+
+makeTB :: Reader Network Doc
+makeTB = do
+  nn <- asks netName
+  nntb <- (++ "_tb") <$> asks netName
+  signals <- vcat <$> tbSigDefs
+  buss <- tbBuss
+  sigMaps <- tbSigMaps
+  return (tbHeader
+          $+$ pp Entity <+> pp nntb <+> pp Is
+          $+$ pp End <+> pp nntb <> semi
+          $+$ architecture nntb (signals $+$ tbSignals)
+          ( pp "uut" <> colon <+> pp Entity <+> pp "work." <> pp nn
+            $+$ pp PortMap <+> parens (
+              indent ( vcat sigMaps
+                       $+$ tbClockedMap
+                     )
+              ) <> semi
+            $+$ clkProcess
+            $+$ pp "TraceTester" <> colon <+> pp Process
+            $+$ indent (testerDecls
+                        $+$ pp "-- More decls here"
+                       )
+            $+$ pp Begin
+            $+$ indent (pp (FileOpen (pp "Status") (pp "F") (pp "filename")) <> semi
+                        $+$ pp If <+> pp "Status" <+> pp NeqOp <+> pp "OPEN_OK" <+> pp Then
+                        $+$ indent (pp Report <+> pp "\"Unable to open trace file\"" <> semi)
+                        $+$ pp Else
+                        $+$ indent (pp (ReadLine (pp "F") (pp "L")) <> semi
+                                    $+$ pp "fieldno" <+> pp Gets <+> pp "0" <> semi
+                                    $+$ vcat (map fieldCheck buss)
+                                    $+$ tbResetWait
+                                    $+$ pp While <+> pp Not <+> pp (EndFile (pp "F")) <+> pp Loop
+                                    $+$ indent (pp (ReadLine (pp "F") (pp "L")) <> semi
+                                                $+$ pp Wait <+> pp Until <+> pp (RisingEdge (pp "clock")) <> semi
+                                                $+$ pp "fieldno" <+> pp Gets <+> pp "0" <> semi
+                                                $+$ vcat (map valCheck buss)
+                                                $+$ pp "clockcycle" <+> pp Gets <+> pp "clockcycle" <+> pp PlusOp <+> pp "1" <> semi
+                                              )
+                                    $+$ pp EndLoop <> semi
+                                    $+$ pp (FileClose (pp "F")) <> semi
+                                   )
+                        $+$ pp EndIf <> semi
+                        $+$ pp Report <+> text "\"Completed after \" & integer'image(clockcycle) & \" clockcycles\"" <> semi
+                        $+$ pp "stop_clock" <+> pp BusGets <+> pp True <> semi
+                        $+$ pp Wait <> semi
+                       )
+            $+$ pp EndProcess <> semi
+          )
+         )
+
 {-|
 
 Toplevel: in entity, for every bus referenced by instances
@@ -235,17 +309,22 @@ makeNetwork = do
   funs <- asks functions
   outFuns <- mapM makeFun funs
   tl <- makeTopLevel
-  return $  OutputFile { dir = ""
-                       , file = vhdlExt nn
-                       , output = header $+$ tl
-                       }
+  tb <- makeTB
+  return $ OutputFile { dir = ""
+                      , file = vhdlExt nn
+                      , output = header $+$ tl
+                      }
     : OutputFile { dir = ""
                  , file = vhdlExt "csv_util"
                  , output = csvUtil
                  }
     : OutputFile { dir = ""
                  , file = vhdlExt "sme_types"
-                  , output = smeTypes
+                 , output = smeTypes
+                 }
+    : OutputFile { dir = ""
+                 , file = vhdlExt $ nn ++ "_tb"
+                 , output  = tb
                  }
     : outFuns
 

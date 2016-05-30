@@ -41,41 +41,51 @@ underscores is = hcat $ punctuate (text "_") (map text is)
 commas :: [Doc] -> [Doc]
 commas = punctuate comma
 
-data VHDLKw = Entity
-            | Architecture
+data VHDLKw = Architecture
             | Begin
-            | End
-            | Of
-            | Is
-            | Process
-            | If
-            | Elsif
-            | Then
-            | Else
-            | Variable
-            | Constant
-            | Port
-            | EndIf
-            | MapTo
-            | PortMap
-            | In
-            | Out
-            | InOut
-            | EndArchitecture
-            | EndProcess
-            | Gets
             | BusGets
-            | ShiftLeft
-            | ShiftRight
-            | Package
-            | Subtype
+            | Constant
             | Downto
-            | StdLogicVec Int Int
-            | StdLogic
-            | Work
-            | Integer
+            | Else
+            | Elsif
+            | End
+            | EndArchitecture
+            | EndIf
+            | EndLoop
+            | EndProcess
+            | Entity
+            | For
             | Generic
             | GenericMap
+            | Gets
+            | If
+            | In
+            | InOut
+            | Integer
+            | Is
+            | Loop
+            | MapTo
+            | Not
+            | Of
+            | Out
+            | Package
+            | Port
+            | PortMap
+            | Process
+            | Report
+            | ShiftLeft
+            | ShiftRight
+            | Signal
+            | StdLogic
+            | StdLogicVec Int Int
+            | Subtype
+            | Then
+            | Until
+            | Variable
+            | Wait
+            | WaitFor
+            | While
+            | Work
             deriving Show
 
 data VHDLFuns = RisingEdge Doc
@@ -85,6 +95,10 @@ data VHDLFuns = RisingEdge Doc
               | Unsigned Doc
               | Signed Doc
               | Resize Doc Int
+              | ReadLine Doc Doc
+              | FileOpen Doc Doc Doc
+              | EndFile Doc
+              | FileClose Doc
 
 instance Pretty VHDLFuns where
   pp (RisingEdge d) = text "rising_edge" <> parens d
@@ -94,6 +108,14 @@ instance Pretty VHDLFuns where
   pp (Unsigned d) = text "unsigned" <> parens d
   pp (Signed d) = text "signed" <> parens d
   pp (Resize d i) = text "resize" <> parens (d <> comma <+> pp i)
+  pp (ReadLine d1 d2) = pp "readline" <> parens (d1 <> comma <+> d2)
+  pp (FileOpen d1 d2 d3) = pp "file_open" <> parens (d1 <> comma <+>
+                                                     d2 <> comma <+>
+                                                     d3 <> comma <+>
+                                                     text "READ_MODE")
+  pp (EndFile d) = pp "endfile" <> parens d
+  pp (FileClose d) = pp "file_close" <> parens d
+
 
 data VHDLAttribs = Length Doc
 
@@ -105,6 +127,10 @@ class Pretty a where
 
 instance Pretty Int where
   pp n = integer $ fromIntegral n
+
+instance Pretty Bool where
+  pp True = pp "true"
+  pp False = pp "false"
 
 instance Pretty String where
   pp = text
@@ -242,4 +268,6 @@ instance Pretty VHDLKw where
   pp (StdLogicVec i j) = text "std_logic_vector" <> parens (pp i <+> pp Downto <+> pp j)
   pp StdLogic = text "std_logic"
   pp GenericMap = pp Generic <+> text "map"
+  pp WaitFor = pp Wait <+> pp For
+  pp EndLoop = pp End <+> pp Loop
   pp r = text $ map toLower (show r)

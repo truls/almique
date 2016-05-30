@@ -5,16 +5,24 @@ module Language.SMEIL.VHDL.Snippets
        , clockedMap
        , csvUtil
        , smeTypes
+       , tbHeader
+       , tbClockedMap
+       , tbSignals
+       , tbResetWait
+       , clkProcess
+       , testerDecls
+       , fieldCheck
+       , valCheck
        )
        where
 
 import Text.PrettyPrint
-import Text.RawString.QQ
 
-import Language.SMEIL.VHDL.Pretty
+import Data.String.Here
+--import Language.SMEIL.VHDL.Pretty
 
 header :: Doc
-header = text $ [r|library ieee;
+header = text $ [i|library ieee;
 use ieee.std_logic_1164.all;
 use ieee.std_logic_unsigned.all;
 use ieee.numeric_std.all;
@@ -24,21 +32,92 @@ use work.sme_types.all;
 
 |]
 
+tbHeader :: Doc
+tbHeader = text [here|
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.std_logic_unsigned.all;
+use ieee.numeric_std.all;
+use std.textio.all;
+use ieee.std_logic_textio.all;
+
+library sme_types;
+use work.sme_types.all;
+
+use work.csv_util.all;
+
+|]
+
 clockedSignals :: Doc
-clockedSignals = text [r|-- Reset signal
+clockedSignals = text [i|-- Reset signal
   "rst: std_logic;
 
   -- Clock signal
   clk: std_logic;
 |]
 
+tbClockedMap :: Doc
+tbClockedMap = text [i|rst => reset,
+clk => clock|]
 
+tbSignals :: Doc
+tbSignals = text [i|
+signal clock: std_logic;
+signal stop_clock: boolean;
+signal reset: std_logic;
+|]
+
+tbResetWait :: Doc
+tbResetWait = text [i|
+Reset <= '1';
+wait for 5 ns;
+reset <= '0';
+|]
+
+clkProcess :: Doc
+clkProcess = text [i|clk: process
+begin
+  while not stop_clock loop
+    clock <= '1';
+    wait for 5 ns;
+    clock <= '0';
+    wait for 5 ns;
+  end loop;
+  wait;
+end process;
+|]
+
+testerDecls :: Doc
+testerDecls = text [i|
+file F: TEXT;
+variable L: LINE;
+variable Status: FILE_OPEN_STATUS;
+constant filename : string := "trace.csv";
+variable clockcycle : integer := 0;
+variable tmp : CSV_LINE_T;
+variable readOK : boolean;
+variable fieldno : integer := 0;
+|]
+
+fieldCheck :: Doc -> Doc
+fieldCheck s = text [i|read_csv_field(L, tmp);
+assert are_strings_equal(tmp, "${s}") report "Field #" & integer'image(fieldno) & " is named: " & truncate(tmp) & " but expected ${s}" severity Failure;
+fieldno := fieldno + 1;
+|]
+
+valCheck :: Doc -> Doc
+valCheck s = text [i|read_csv_field(L, tmp);
+if not are_strings_equal(tmp, "U") then
+  assert are_strings_equal(int_image(${s}), tmp) report "Unexpected value of ${s} in cycle " & integer'image(clockcycle) & ". Actual value was: " & int_image(${s}) & " but expected " & truncate(tmp) severity Error;
+end if;
+fieldno := fieldno + 1;
+|]
 
 clockedMap :: Doc
 clockedMap = empty $+$ text "rst => rst," $+$ text "clk => clk"
 
 -- systemTypes :: Doc
--- systemTypes = text [r|library IEEE;
+-- systemTypes = text [i|library IEEE;
 -- use IEEE.STD_LOGIC_1164.ALL;
 -- use IEEE.NUMERIC_STD.ALL;
 
@@ -47,7 +126,8 @@ clockedMap = empty $+$ text "rst => rst," $+$ text "clk => clk"
 --   $+$ indent ( pp Subtype <+> text "T_SYSTEM_BOOL" <+> 
 
 smeTypes :: Doc
-smeTypes = text [r|library ieee;
+smeTypes = text [here|
+library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 
@@ -138,9 +218,11 @@ end sme_types;
 |]
 
 csvUtil :: Doc
-csvUtil = text [r|library ieee;
+csvUtil = text [here|
+library ieee;
 
-use ieee.std_ligic_1164.all;
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
 use std.textio.all;
 use ieee.std_logic_textio.all;
 use std.textio.all;
@@ -164,6 +246,12 @@ package csv_util is
 
   -- converts std_logic_vector into a string
   function str(b: std_logic_vector) return string;
+
+-- converts std_logic_vector to integer to string
+  function int_image(b: std_logic_vector) return string;
+
+  -- converts std_logic_vector to integer to string
+  function uint_image(b: std_logic_vector) return string;
 
   -- Returns the first occurrence of a a given character
   function index_of_chr(ln: string; c: character) return integer;
@@ -309,6 +397,20 @@ package body csv_util is
         return res;
       end if;
     end str;
+
+    function int_image(b: std_logic_vector) return string is
+      variable i: integer;
+    begin
+      i := to_integer(signed(b));
+      return integer'image(i);
+    end int_image;
+
+    function uint_image(b: std_logic_vector) return string is
+      variable i: integer;
+    begin
+      i := to_integer(unsigned(b));
+      return integer'image(i);
+    end uint_image;
 
 end package body csv_util;
 |]
