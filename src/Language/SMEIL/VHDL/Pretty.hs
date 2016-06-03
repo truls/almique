@@ -209,15 +209,30 @@ varCast (FloatType _) d = pp "-- Floats not supported" <+> d
 varCast BoolType d = pp "-- Bools not supported" <+> d
 varCast AnyType d = d
 
+-- Params that must evaluate a primitive and constant VHDL value should be
+-- printed without type annotations
+paramExpr :: Expr -> Doc
+paramExpr BinOp { op = o
+                , left = l
+                , right = r
+                } = pp l <+> pp o <+> pp r
+paramExpr UnOp { unOp = u
+               , unOpVal = v
+               } = pp u <+> pp v
+paramExpr (Prim p) = pp p
+paramExpr (Var v) = pp v
+paramExpr (Paren e) = pp e
+paramExpr NopExpr = empty
+
 instance Pretty Expr where
   pp BinOp { op = SLOp
            , left = l
            , right = r
-           } = pp ShiftLeft <> parens (pp l <> comma <+> pp r)
+           } = pp ShiftLeft <> parens (pp l <> comma <+> paramExpr r)
   pp BinOp { op = SROp
            , left = l
            , right = r
-           } = pp ShiftRight <> parens (pp l <> comma <+> pp r)
+           } = pp ShiftRight <> parens (pp l <> comma <+> paramExpr r)
   pp BinOp { op = o@MulOp
            , left = l
            , right = r
@@ -230,7 +245,8 @@ instance Pretty Expr where
           , unOpVal = v
           } = pp u <+> pp v
   pp (Prim p) = primCast p
-  pp (Var v@ParamVar{}) = pp v
+  -- FIXME: Assuming all params are integers
+  pp (Var v@ParamVar{}) = pp $ ToSigned (pp v) (pp $ Length (pp $ IntType 32))
   pp (Var v) = varCast (typeOf v) $ pp v
   pp (Paren e) = parens $ pp e
   pp NopExpr = empty
