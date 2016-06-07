@@ -56,7 +56,6 @@ data Network = Network { netName :: Ident
                        , busses :: [Bus]
                        , instances :: [Instance]
                        }
-               --, mappings :: [Map]}
              deriving (Eq, Show)
 
 -- type Network = [Function]

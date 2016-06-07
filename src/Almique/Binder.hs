@@ -330,7 +330,7 @@ bindInstance A.NewInst { A.instBindings = bindings
     -- FIXME: Maybe do something about the type here
     mapBinding (ident, A.Bound _type (Prim p)) = return (ident, p)
     mapBinding (_, A.Bound _type _) = throwError "Variable bound to non-primitive value"
-    mapBinding _ = throwError "Instance parameter bound to free variable"
+    mapBinding v = throwError $ "Instance parameter bound to free variable " ++ show v
 
     resolveBusName :: Ident -> BindM Ident
     resolveBusName i = queryBusDef i busName

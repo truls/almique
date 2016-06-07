@@ -23,7 +23,7 @@ import Text.PrettyPrint
 import Language.SMEIL
 
 indentWidth :: Int
-indentWidth = 3
+indentWidth = 2
 
 indent :: Doc -> Doc
 indent = nest indentWidth
