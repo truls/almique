@@ -13,6 +13,7 @@ module Almique.Analyzer
        where
 
 import qualified Data.Map.Strict as Map
+import qualified Data.IntMap.Strict as IntMap
 --import qualified Data.Set as Set
 import Control.Monad.State.Lazy
 import Control.Monad.Except
@@ -21,8 +22,12 @@ import Control.Monad.Extra (allM)
 import Data.Maybe
 
 import Language.Python.Common as Py hiding (annot, (<>))
+import Language.Python.Common.SrcLocation
 
 import qualified Language.SMEIL as SMEIL
+import Almique.CommentSupport
+
+import Debug.Trace
 
 --------------------------------------------------------------------------------
 -- Analysis state data type definition
@@ -51,6 +56,7 @@ data AnState = AnState { currentBlock :: Maybe FunInterpState
                        , instances :: Map.Map SMEIdent NewInst
                        , classesSeen :: [String]
                        , netName :: SMEIdent
+                       , comments :: IntMap.IntMap String
   --                     , nameState :: NameState
                        }
              deriving Show
@@ -67,6 +73,7 @@ newState = AnState { currentBlock = Nothing
                    , classesSeen = mempty
                    , instances = mempty
                    , netName = ""
+                   , comments = mempty
 --                   , nameState = 0
                    }
 
@@ -223,22 +230,37 @@ withNewBlockContext f merger = do
                   >> f
                   >> merger)
 
+getTypeAnnot :: SrcSpan -> SMEIL.DType -> AnM SMEIL.DType
+getTypeAnnot a t = do
+  comment <- IntMap.lookup (startRow a) <$> gets comments
+  case comment of
+    Nothing -> return t
+    Just s -> case parseVarAnnot s of
+      Nothing -> return t
+      Just p -> return p
+
 --------------------------------------------------------------------------------
 -- Pattern definitions
 --------------------------------------------------------------------------------
 
 pattern PVarIdent i <- Var { var_ident = Ident { ident_string = i } }
 pattern PIntLit i <- Int { int_value = i }
+pattern PBoolList i <- Bool { bool_value = i }
 pattern PIdent n <- Ident { ident_string = n }
 pattern PString1 s <- Strings { strings_strings = [s] }
 pattern PListEls l <- List { list_exprs = l }
 pattern PArgExpr e <- ArgExpr { arg_expr = e }
-pattern PAssign to expr <- Assign { assign_to = [ to ]
-                                  , assign_expr = expr
-                                  }
+pattern PAssign to expr <-  Assign { assign_to = [ to ]
+                                        , assign_expr = expr
+                                        }
+pattern PAssign' to expr srcSpan <-  Assign { assign_to = [ to ]
+                                        , assign_expr = expr
+                                        , stmt_annot = srcSpan
+                                        }
+
 pattern PClassAssign to ident args <- PAssign (PVarIdent to) Call { call_fun = ident
-                                                                 , call_args = args
-                                                                 }
+                                                                  , call_args = args
+                                                                  }
 pattern PSelfFunCall fun args <- StmtExpr { stmt_expr =
                                            Call { call_fun =
                                                    Dot { dot_expr = PVarIdent "self"
@@ -250,11 +272,12 @@ pattern PSelfFunCall fun args <- StmtExpr { stmt_expr =
 pattern PSelfDot dest <- Dot { dot_expr = PVarIdent "self"
                              , dot_attribute = PIdent dest
                              }
-pattern PSelfAssign dest val <- PAssign (PSelfDot dest) val
+pattern PSelfAssign dest val srcSpan <- PAssign' (PSelfDot dest) val srcSpan
 pattern PExprInt n = SMEIL.Prim (SMEIL.Num (SMEIL.SMEInt n))
 pattern PExprFloat n = SMEIL.Prim (SMEIL.Num (SMEIL.SMEFloat n))
 pattern PExprBool n = SMEIL.Prim (SMEIL.Bool n)
-pattern PBoundNum n = Bound (SMEIL.IntType 32) (PExprInt n)
+pattern PBoundNum n t = Bound t (PExprInt n)
+pattern PBoundBool n = Bound SMEIL.BoolType (PExprBool n)
 pattern PFreeNamedVar v t = Free t (SMEIL.Var (SMEIL.NamedVar SMEIL.AnyType v))
 
 --------------------------------------------------------------------------------
@@ -404,7 +427,7 @@ genFunction t name s
     genSetup (PSelfFunCall "map_outs" (_:args) ) = do
       argList <- stringifyArgList args
       addOutbusIS argList
-    genSetup (PSelfAssign dest (PVarIdent symb)) = do
+    genSetup (PSelfAssign dest (PVarIdent symb) _annot) = do
       param <- isParam symb
         -- TODO: Lookup variable binding in either list of bound variables or
         -- parameters
@@ -413,9 +436,13 @@ genFunction t name s
          else
         -- TODO: Do something useful here
         void $ addBindingIS (SMEIL.NamedVar SMEIL.AnyType dest) $ PFreeNamedVar (symb ++ "_bound") SMEIL.AnyType
-    genSetup (PSelfAssign dest (PIntLit i )) =
-      addBindingIS (SMEIL.NamedVar (SMEIL.IntType 32) dest) $ PBoundNum i
-    genSetup (PSelfAssign dest e) = do
+    genSetup (PSelfAssign dest (PIntLit i ) ann) = do
+      ta <- getTypeAnnot ann (SMEIL.IntType 32)
+      addBindingIS (SMEIL.NamedVar ta dest) $ PBoundNum i ta
+    -- genSetup (PSelfAssign dest (PBoolList i) annot) =
+    --   addBindingIS (SMEIL.NamedVar SMEIL.BoolType dest) $ PBoundBool i
+    genSetup (PSelfAssign dest e _annot) = do
+      -- TODO: Expression evaluator?
       expr <- genExpr e
       addBindingIS (SMEIL.NamedVar SMEIL.AnyType dest) $ Free SMEIL.AnyType expr
     genSetup _ = tell ["Ignoring statement in setup function"]
@@ -491,13 +518,14 @@ genNetwork name stm = when (funName "wire" stm) (mapBlockStms networkDef stm)
                 , ArgExpr { arg_expr = PVarIdent btype }
                 ]
                ) = do
-      smetype <- mapType btype
+      smetype <- trace "Got bus def" mapType btype
       ports <- stringifyList parlist
       addBindingIS (SMEIL.BusVar SMEIL.AnyType varName "") (Bound SMEIL.AnyType SMEIL.NopExpr)
       addBus varName SMEIL.Bus { SMEIL.busName = unquote bname
                           , SMEIL.busDtype = smetype
                           , SMEIL.busPorts = ports
                           }
+
     networkDef (PClassAssign varName (PVarIdent instof)
                 ( ArgExpr { arg_expr = PString1 iname }
                   : ArgExpr { arg_expr = inbusses }
@@ -551,7 +579,7 @@ genNetwork name stm = when (funName "wire" stm) (mapBlockStms networkDef stm)
     networkDef Fun {fun_name = _n}  = tell ["there shouldn't be a function here "]
     networkDef s = do
       -- FIXME: I don't like this
-      stat <- genStm s `catchError` (\_ -> return SMEIL.NopStmt)
+      stat <- trace (show s) $ genStm s `catchError` (\_ -> return SMEIL.NopStmt)
       case stat of
         (SMEIL.Assign i n@(SMEIL.Var (SMEIL.NamedVar _ _))) -> addBindingIS i (Free SMEIL.AnyType n)
         (SMEIL.Assign i n@(SMEIL.Prim (SMEIL.Num _))) -> addBindingIS i (Bound (SMEIL.IntType 32) n)
@@ -561,5 +589,5 @@ genNetwork name stm = when (funName "wire" stm) (mapBlockStms networkDef stm)
 genModule :: Module SrcSpan -> AnM ()
 genModule (Module m) = mapM_ genStatement m
 
-analyzePyMod :: ModuleSpan -> Either AnError (AnState, AnLog)
-analyzePyMod pymod = runAnM newState (genModule pymod)
+analyzePyMod :: ModuleSpan -> [Token] -> Either AnError (AnState, AnLog)
+analyzePyMod pymod c = runAnM (newState {comments = lineMap c})  (genModule pymod)

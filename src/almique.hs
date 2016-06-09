@@ -4,7 +4,7 @@ import System.Environment
 import System.Exit
 -- import Control.Monad.IO.Class
 
-import Language.SMEIL
+--import Language.SMEIL
 import Almique.Analyzer
 import Almique.Binder
 import Almique.Output
@@ -23,10 +23,10 @@ parseFile path = do
     contents <- readFile path
     case Py3.parseModule contents path of
       Left e -> return $ Left $ ParseErr e
-      Right (m, c) -> trace (show c) $
-        case analyzePyMod m of
+      Right (m, c) -> trace ("Comments: " ++ show c) $
+        case analyzePyMod m c of
           Left e -> return $ Left $ GenErr e
-          Right r ->  return $ Right r
+          Right r -> return $ Right r
 
 --bind :: AnState -> Either BindErr Function
 --bind = 

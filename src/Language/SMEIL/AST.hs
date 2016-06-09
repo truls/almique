@@ -21,6 +21,7 @@ module Language.SMEIL.AST
        , Variable(..)
        , PrimVal(..)
        , SMEBool(..)
+       , nameOf
        ) where
 
 type Ident = String
@@ -137,14 +138,15 @@ data Variable = ConstVar DType Ident
               | ParamVar DType Ident
               deriving Show
 
+nameOf :: Variable -> Ident
+nameOf (ConstVar _ n) = n
+nameOf (NamedVar _ n) = n
+nameOf (BusVar _ n m) = n ++ "_" ++ m
+nameOf (ParamVar _ n) = n
+
 -- | Variable _names_ should be unique independent of their kind
 instance Eq Variable where
-  a == b = vname a == vname b
-    where
-      vname (ConstVar _ n) = n
-      vname (NamedVar _ n) = n
-      vname (BusVar _ n m) = n ++ "_" ++ m
-      vname (ParamVar _ n) = n
+  a == b = nameOf a == nameOf b
 
 data Expr = BinOp { op :: BinOps
                   , left :: Expr

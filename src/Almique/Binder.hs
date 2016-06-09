@@ -10,18 +10,19 @@ import Control.Monad.Reader
 import Control.Monad.Except
 import qualified Data.Map.Strict as Map hiding (map)
 import qualified Data.Set as Set
-import Data.Maybe (isNothing, fromMaybe)
+import Data.Maybe (isNothing, fromMaybe, catMaybes)
 import Data.List
 import Data.Monoid
 
 import Language.SMEIL
 import qualified Almique.Analyzer as A
 
---import Debug.Trace
+import Debug.Trace
 
 type InstPorts = (Ident, ([Ident], [Ident]))
 type InstParams = (Ident, (DType, Ident))
-type VarTypes = Set.Set Variable
+--type VarTypes = Set.Set Variable
+type VarTypes = Map.Map Ident DType
 
 type BindErr = String
 
@@ -120,25 +121,25 @@ queryBusDef i f = do
 genNameSet :: Ident -> [(Ident, Ident)] -> [Decl] -> [Decl] -> BindM VarTypes
 genNameSet fName busNameMap localList params = do
   busList <- concat <$> mapM busVars busNameMap
-  let decls = map declVars localList
+  let decls = trace (show localList) $ map declVars localList
   let params' = map paramVars params
-  return $ Set.fromList busList <> Set.fromList decls <> Set.fromList params'
+  return $ Map.fromList busList <> Map.fromList decls <> Map.fromList params'
   where
-    busVars :: (Ident, Ident) -> BindM [Variable]
+    busVars :: (Ident, Ident) -> BindM [(Ident, DType)]
     busVars (l, n) = do
       bus <- queryBusDef n id
       let t = busDtype bus
-      return [BusVar t l p | p <- busPorts bus ]
+      return [(l ++ "_" ++ p, t) | p <- busPorts bus ]
 
-    declVars :: Decl -> Variable
-    declVars (Decl var _ _) = var
+    declVars :: Decl -> (Ident, DType)
+    declVars (Decl var _ _) = (nameOf var, typeOf var)
 
-    paramVars :: Decl -> Variable
+    paramVars :: Decl -> (Ident, DType)
     -- TODO: Only supporting integer parameters for now. Extend this to
     -- inferring parameter types based on parameter values in instantiations
-    paramVars (Decl (NamedVar AnyType n) _ _) = NamedVar (IntType 32) n
+    paramVars (Decl (NamedVar AnyType n) _ _) = (n, IntType 32)
     -- FIXME: Do something better here
-    paramVars (Decl v _ _) = v
+    paramVars (Decl v _ _) = (nameOf v, typeOf v)
 
 -- | For each function, check that all variables in function bodies are defined
 -- verify that variable kinds are correct. Furthermore, we should infer the
@@ -155,7 +156,7 @@ bindFunction ps = do
   funParams' <- map mapFunParam <$> queryIS A.params id -- >>= genFunParam
   allLocals <- queryIS A.bindings Map.toList >>= mapM (mapBinding [])
   nameSet <- genNameSet funName' (inPorts ++ outPorts)
-    (fromMaybe [] (sequence allLocals)) funParams'
+    (catMaybes allLocals) funParams'
   (funBody', funVars) <- queryFunCurIS funBody >>= checkStmts nameSet
   --funBody'' <- queryFunCurIS funBody
 
@@ -251,10 +252,10 @@ checkExpr _ n@NopExpr = return n
 
 setType :: VarTypes -> Variable -> BindM Variable
 setType vs v = do
-  let varType = typeOf <$> Set.lookupLE v vs
-  varType' <- case varType of
+  let varType = trace (show vs) Map.lookup (nameOf v) vs
+  varType' <- trace (show varType) $ case varType of
                 Just t -> return t
-                Nothing -> throwError $ "Undefined variable  " ++ show v
+                Nothing -> throwError $ "Undefined variable  " ++ show vs ++ " " ++  show v
   case v of
     (ConstVar _ n) -> return $ ConstVar varType' n
     (ParamVar _ n) -> return $ ParamVar varType' n
