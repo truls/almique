@@ -49,6 +49,9 @@ data DType = IntType Int
            | AnyType
             deriving (Eq, Show)
 
+instance Ord DType where
+  compare a b = show a `compare` show b
+
 -- data PrimVal = PrimVal SMENum Integer
 --                deriving (Eq, Show)
 
@@ -63,7 +66,7 @@ data Network = Network { netName :: Ident
 
 data Bus = Bus { busName :: Ident
                , busDtype :: DType
-               , busPorts :: [Ident]
+               , busPorts :: [(Ident, DType)]
                }
          deriving (Eq, Show)
 

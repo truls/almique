@@ -1,4 +1,9 @@
-module Language.SMEIL.Typing ( typeOf ) where
+module Language.SMEIL.Typing
+  ( typeOf
+  , sizeOf
+  , sign
+  , Signedness(..))
+where
 
 import Language.SMEIL.AST
 
@@ -8,6 +13,8 @@ unify :: DType -> DType -> DType
 unify a b
   | a == b = a
   | otherwise = AnyType
+
+data Signedness = IsSigned | IsUnsigned
 
 class TypeOf a where
   typeOf :: a -> DType
@@ -42,3 +49,15 @@ instance TypeOf Expr where
   typeOf (Paren e) = typeOf e
   typeOf (Var v) = typeOf v
   typeOf NopExpr = AnyType
+
+sizeOf :: DType -> Int
+sizeOf (IntType s) = s
+sizeOf (UIntType s) = s
+sizeOf _ = 0
+
+sign :: DType -> Signedness
+sign (IntType _) = IsSigned
+sign (UIntType _) = IsUnsigned
+sign BoolType = IsUnsigned
+sign (FloatType _) = IsSigned
+sign AnyType = IsSigned

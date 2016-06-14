@@ -10,10 +10,12 @@ module Language.SMEIL.VHDL.Pretty
        , primDefaultVal
        , assignCast
        , varCast
+       , typeName
        , Pretty
        , pp
        , VHDLKw(..)
        , VHDLFuns(..)
+       , VHDLAttribs(..)
        )
        where
 
@@ -44,6 +46,7 @@ commas = punctuate comma
 data VHDLKw = Architecture
             | Begin
             | BusGets
+            | Body
             | Constant
             | Downto
             | Else
@@ -55,6 +58,7 @@ data VHDLKw = Architecture
             | EndProcess
             | Entity
             | For
+            | Fun
             | Generic
             | GenericMap
             | Gets
@@ -72,7 +76,10 @@ data VHDLKw = Architecture
             | Port
             | PortMap
             | Process
+            | Pure
+            | PureFunction
             | Report
+            | Return
             | ShiftLeft
             | ShiftRight
             | Signal
@@ -124,6 +131,9 @@ instance Pretty VHDLAttribs where
 
 class Pretty a where
   pp :: a -> Doc
+  -- FIXME: Kind of a hack?
+  pp' :: a -> DType -> Doc
+  pp' e _ = pp e
 
 instance Pretty Int where
   pp n = integer $ fromIntegral n
@@ -143,10 +153,15 @@ primDefaultVal BoolType = pp "'0'"
 primDefaultVal AnyType = empty
 --primDefaultVal t@(SMEInt l) -> assignCast t $ ToSigned (pp 0) (pp l)
 
-primCast :: PrimVal -> Doc
-primCast (Num i@(SMEInt _l)) = pp $ ToSigned (pp i) (pp $ Length (pp $ typeOf i))
-primCast (Num f@(SMEFloat _)) = pp f
-primCast o = pp o
+toSignedness :: DType -> Doc -> Doc
+toSignedness t@(IntType _) d = pp $ ToSigned d (pp $ Length (pp t))
+toSignedness t@(UIntType _) d = pp $ ToUnsigned d (pp $ Length (pp t))
+toSignedness _ d = d
+
+primCast :: PrimVal -> DType -> Doc
+primCast (Num i@(SMEInt _l)) t = toSignedness t (pp i)
+primCast (Num f@(SMEFloat _)) t = pp f
+primCast o _t = pp o
 
 instance Pretty PrimVal where
   pp (Num n) = pp n
@@ -160,6 +175,11 @@ instance Pretty SMENum where
 instance Pretty SMEBool where
   pp SMETrue = text "true"
   pp SMEFalse = text "false"
+
+typeName :: DType -> Doc
+typeName (IntType l) = text "i" <> pp l
+typeName (UIntType l) = text "u" <> pp l
+typeName t = pp t
 
 instance Pretty DType where
   pp (IntType l) = text "i" <> pp l <> text "_t"
@@ -186,8 +206,8 @@ assignCast AnyType d = d
 
 instance Pretty Stmt where
   pp (Assign v e) = case v of
-    n@(NamedVar t _) -> pp n <+> pp Gets <+> assignCast t (pp e) <> semi
-    n@(BusVar t _ _) -> pp n <+> pp BusGets <+> assignCast t (pp e) <> semi
+    n@(NamedVar t _) -> pp n <+> pp Gets <+> assignCast t (pp' e t) <> semi
+    n@(BusVar t _ _) -> pp n <+> pp BusGets <+> assignCast t (pp' e t) <> semi
     (ConstVar _ _) -> text "-- Assignment to constvar attempted"
     (ParamVar _ _) -> text "-- Assignment to generic value"
   pp (Cond ((e, s):cs) es) = pp If <+> pp e <+> pp Then $+$
@@ -244,12 +264,38 @@ instance Pretty Expr where
   pp UnOp { unOp = u
           , unOpVal = v
           } = pp u <+> pp v
-  pp (Prim p) = primCast p
+  pp (Prim p) = primCast p (typeOf p)
   -- FIXME: Assuming all params are integers
-  pp (Var v@ParamVar{}) = pp $ ToSigned (pp v) (pp $ Length (pp $ IntType 32))
+  pp (Var v@ParamVar{}) = pp $ ToSigned (pp v) (pp $ Length (pp $ typeOf v))
   pp (Var v) = varCast (typeOf v) $ pp v
   pp (Paren e) = parens $ pp e
   pp NopExpr = empty
+  pp' BinOp { op = SLOp
+             , left = l
+             , right = r
+             } t = pp ShiftLeft <> parens (pp' l t <> comma <+> paramExpr r)
+  pp' BinOp { op = SROp
+             , left = l
+             , right = r
+             } t = pp ShiftRight <> parens (pp' l t <> comma <+> paramExpr r)
+  pp' BinOp { op = o@MulOp
+           , left = l
+           , right = r
+           } t = pp $ Resize (pp' l t <+> pp o <+> pp' r t) $ sizeOf t
+  pp' BinOp { op = p
+           , left = l
+           , right = r
+           } t = pp' l t <+> pp p <+> pp' r t
+  pp' UnOp { unOp = u
+          , unOpVal = v
+          } t = pp u <+> pp' v t
+  pp' (Prim p) t = primCast p t
+  -- FIXME: Assuming all params are integers
+  pp' (Var v@ParamVar{}) t = toSignedness t (pp v)
+  pp' (Var v) t = varCast (typeOf v) $ pp v
+  pp' (Paren e) t = parens $ pp' e t
+  pp' NopExpr t = empty
+
 
 instance Pretty BinOps where
   pp PlusOp = text "+"
@@ -286,4 +332,6 @@ instance Pretty VHDLKw where
   pp GenericMap = pp Generic <+> text "map"
   pp WaitFor = pp Wait <+> pp For
   pp EndLoop = pp End <+> pp Loop
+  pp Fun = text "function" -- Name clash with SMEIL.AST
+  pp PureFunction = pp Pure <+> pp Fun
   pp r = text $ map toLower (show r)

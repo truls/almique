@@ -269,9 +269,18 @@ pattern PSelfFunCall fun args <- StmtExpr { stmt_expr =
                                                  , call_args = args
                                                  }
                                           }
-pattern PSelfDot dest <- Dot { dot_expr = PVarIdent "self"
-                             , dot_attribute = PIdent dest
-                             }
+pattern PBusDefType t n <- Call { call_fun = PTypeDot t
+                                , call_args =
+                                    [ ArgExpr { arg_expr =
+                                                  Strings { strings_strings = [n] }
+                                              }
+                                    ]
+                                }
+pattern PTypeDot t <- PDottedName "t" t
+pattern PSelfDot dest <- PDottedName "self" dest
+pattern PDottedName a b <- Dot { dot_expr = PVarIdent a
+                               , dot_attribute = PIdent b
+                               }
 pattern PSelfAssign dest val srcSpan <- PAssign' (PSelfDot dest) val srcSpan
 pattern PExprInt n = SMEIL.Prim (SMEIL.Num (SMEIL.SMEInt n))
 pattern PExprFloat n = SMEIL.Prim (SMEIL.Num (SMEIL.SMEFloat n))
@@ -292,6 +301,17 @@ stringifyList (PListEls els) = mapM el els
     el (PVarIdent i) = return i
     el _ = throwError "Only lists consisting entirely of variable names, strings or numbers are supported"
 stringifyList _ = throwError "Not a list"
+
+busArgList :: Expr SrcSpan -> AnM [(String, SMEIL.DType)]
+busArgList (PListEls e) = mapM busCh e
+  where
+    busCh :: Expr SrcSpan -> AnM (String, SMEIL.DType)
+    busCh (PBusDefType t n) = case parseBusAnnot t of
+      Just ty -> return (unquote n, ty)
+      Nothing -> throwError "Invalid type name in bus channel definition"
+    -- TODO: Maybe support a default type here
+    busCh _ = throwError "Invalid expression in bus channel list"
+busArgList _ = throwError "Not a list"
 
 stringifyArgList :: [Argument SrcSpan] -> AnM [String]
 stringifyArgList els = do
@@ -519,7 +539,7 @@ genNetwork name stm = when (funName "wire" stm) (mapBlockStms networkDef stm)
                 ]
                ) = do
       smetype <- trace "Got bus def" mapType btype
-      ports <- stringifyList parlist
+      ports <- busArgList parlist
       addBindingIS (SMEIL.BusVar SMEIL.AnyType varName "") (Bound SMEIL.AnyType SMEIL.NopExpr)
       addBus varName SMEIL.Bus { SMEIL.busName = unquote bname
                           , SMEIL.busDtype = smetype

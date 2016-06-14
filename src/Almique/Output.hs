@@ -77,8 +77,11 @@ funPortNames :: (Ident, Ident) -> Reader Network [Doc]
 funPortNames (n, t) = do
   -- FIXME: This simply returns nothing if the bus referred to
   -- 1) Do static checking in Binder to make sure this cannot fail
-  ps <- findPred busses (\bn -> t == busName bn) busPorts
+  ps <- findPred busses (\bn -> t == busName bn) (map fst . busPorts)
   return $ map (\s -> underscores [n,s]) (fromMaybe [] ps)
+
+funTypeNames :: (Ident, Ident) -> Reader Network [DType]
+funTypeNames (_n, t) = fromMaybe [] <$> findPred busses (\bn -> t == busName bn) (map snd . busPorts)
 
 -- |Generates a list of input and output ports
 entPorts :: Function -> Reader Network Doc
@@ -88,10 +91,9 @@ entPorts Function { funInports = ins
   where
     ports :: VHDLKw -> (Ident, Ident) -> Reader Network Doc
     ports d ps = do
-      names <- funPortNames ps
-      bt <- fromMaybe AnyType <$> findPred busses (\bn -> snd ps == busName bn) busDtype
+      portList <- zip <$> funPortNames ps <*> funTypeNames ps
       return $ vcat $
-        map (\s -> s <> colon <+> pp d <+> pp bt <> semi) names
+        map (\(s, t) -> s <> colon <+> pp d <+> pp t <> semi) portList
 
 -- TODO: Support other types than integer here
 entGenerics :: Function -> Doc
@@ -118,11 +120,10 @@ makeVar (Decl (ConstVar _ty n) t v) = pp Constant <+> text n <> colon
 makeVar _ = empty
 
 funSignalReset :: (Ident, Ident) -> Reader Network Doc
-funSignalReset p@(_, t) = do
-  busT <- fromMaybe AnyType <$> findPred busses (\bn -> t == busName bn) busDtype
-  portNames <- funPortNames p
+funSignalReset p = do
+  ports <- zip <$> funPortNames p <*> funTypeNames p
   -- FIXME: Maybe its better to generate SMEIL here and pretty print it?
-  return $ vcat $ map (\a -> a <+> pp BusGets <+> primDefaultVal busT <> semi) portNames
+  return $ vcat $ map (\(a, t) -> a <+> pp BusGets <+> primDefaultVal t <> semi) ports
 
 funVarReset :: Decl -> Doc
 funVarReset (Decl v@(NamedVar ty _) _ _) = pp v <+> pp Gets <+> primDefaultVal ty <> semi
@@ -192,8 +193,7 @@ topBusPorts b = do
   nn <- asks netName
   let bn = busName b
   let bp = busPorts b
-  let bt = busDtype b
-  return $ map (\s -> (underscores [nn, bn, s], pp bt)) bp
+  return $ map (\(s, t) -> (underscores [nn, bn, s], pp t)) bp
 
 topPorts :: Reader Network Doc
 topPorts = do
@@ -281,6 +281,43 @@ makeTB = do
           )
          )
 
+makeTypeDefs :: [DType] -> Doc
+makeTypeDefs ts = typesHead
+  $+$ pp Package <+> text "sme_types" <+> pp Is
+  $+$ indent ((pp Subtype <+> text "bool_t" <+> pp Is <+> pp StdLogic <> semi)
+              $+$ vcat (map typeDefs ts)
+              $+$ vcat (map funDefs ts)
+             )
+  $+$ pp End <+> text "sme_types" <> semi
+  $+$ text ""
+  $+$ pp Package <+> pp Body <+> text "sme_types" <+> pp Is
+  $+$ indent (vcat $ map bodyFuns ts)
+  $+$ pp End <+> text "sme_types" <> semi
+  where
+    typeDefs :: DType -> Doc
+    typeDefs t = pp Subtype <+> pp t <+> pp Is <+> pp (StdLogicVector (pp (sizeOf t - 1) <+> pp Downto <+> pp "0")) <> semi
+    -- FIXME: Distinguish between integers and naturals (only convert from
+      -- natural to unsigned and integer to signed)
+    funDefs t = pp "" $+$ pp "-- converts an integer to" <+> typeName t
+                $+$ pp PureFunction <+> typeName t <> parens (pp "v" <> colon <+> pp Integer)
+                      <+> (pp Return <+> pp t <> semi)
+
+    bodyFuns t = pp PureFunction <+> typeName t <> parens (text "v" <> colon
+                                                                   <+> pp Integer)
+      <+> pp Return <+> pp t <+> pp Is
+      $+$ pp Begin
+      $+$ indent (pp Return <+> pp (StdLogicVector (pp $ toSign (pp "v") (pp $ Length (pp t)))) <> semi)
+      $+$ pp End <+> typeName t <> semi
+      -- FIXME: Causes trailing spaces after newline
+      $+$ pp ""
+      where
+        -- FIXME: This doesn't take into account floats, but we don't have any
+        -- of those yet
+        toSign :: Doc -> Doc -> VHDLFuns
+        toSign d1 d2 = case sign t of
+                         IsSigned -> ToSigned d1 d2
+                         IsUnsigned -> ToUnsigned d1 d2
+
 {-|
 
 Toplevel: in entity, for every bus referenced by instances
@@ -303,8 +340,9 @@ makeFun f = do
                       $+$ architecture fname empty procc
                     }
 
-makeNetwork :: Reader Network OutputPlan
-makeNetwork = do
+
+makeNetwork :: [DType] -> Reader Network OutputPlan
+makeNetwork ts = do
   nn <- asks netName
   funs <- asks functions
   outFuns <- mapM makeFun funs
@@ -320,7 +358,7 @@ makeNetwork = do
                  }
     : OutputFile { dir = ""
                  , file = vhdlExt "sme_types"
-                 , output = smeTypes
+                 , output = makeTypeDefs ts
                  }
     : OutputFile { dir = ""
                  , file = vhdlExt $ nn ++ "_tb"
@@ -328,8 +366,8 @@ makeNetwork = do
                  }
     : outFuns
 
-makePlan :: Network -> OutputPlan
-makePlan = runReader makeNetwork
+makePlan :: Network -> [DType] -> OutputPlan
+makePlan n ts = runReader (makeNetwork ts) n
 
 execPlan :: OutputPlan -> IO ()
 execPlan = mapM_ (makeOutput . spliceDir)
