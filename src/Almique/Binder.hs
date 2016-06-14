@@ -13,6 +13,7 @@ import qualified Data.Set as Set
 import Data.Maybe (isNothing, fromMaybe, catMaybes)
 import Data.List
 import Data.Monoid
+import Data.Set (toList, fromList)
 
 import Language.SMEIL
 import qualified Almique.Analyzer as A
@@ -32,7 +33,7 @@ newtype BindM a = BindM { unBindM :: ExceptT BindErr (Reader A.AnState) a }
                        , MonadReader A.AnState
                        )
 
-runBindM :: A.AnState -> BindM Network -> Either BindErr Network
+runBindM :: A.AnState -> BindM (Network, [DType]) -> Either BindErr (Network, [DType])
 runBindM s m = runReader (runExceptT $ unBindM m) s
 
 -- | Query state of named function
@@ -128,8 +129,7 @@ genNameSet fName busNameMap localList params = do
     busVars :: (Ident, Ident) -> BindM [(Ident, DType)]
     busVars (l, n) = do
       bus <- queryBusDef n id
-      let t = busDtype bus
-      return [(l ++ "_" ++ p, t) | p <- busPorts bus ]
+      return [(l ++ "_" ++ p, t) | (p, t) <- busPorts bus ]
 
     declVars :: Decl -> (Ident, DType)
     declVars (Decl var _ _) = (nameOf var, typeOf var)
@@ -144,7 +144,7 @@ genNameSet fName busNameMap localList params = do
 -- | For each function, check that all variables in function bodies are defined
 -- verify that variable kinds are correct. Furthermore, we should infer the
 -- the variable kinds being used
-bindFunction :: [InstPorts] -> BindM Function
+bindFunction :: [InstPorts] -> BindM (Function, [DType])
 bindFunction ps = do
   -- FIXME: Most of these mappings (and by extension the entire FunInterpState
   -- type) ended up being rather pointless.
@@ -158,19 +158,20 @@ bindFunction ps = do
   nameSet <- genNameSet funName' (inPorts ++ outPorts)
     (catMaybes allLocals) funParams'
   (funBody', funVars) <- queryFunCurIS funBody >>= checkStmts nameSet
-  --funBody'' <- queryFunCurIS funBody
 
   -- FIXME: Using toList feels like a bad idea
   locals' <- queryIS A.bindings Map.toList >>= mapM (mapBinding funVars)
-  return Function { funName = funName'
-                  , funInports = inPorts
-                  , funOutports = outPorts
-                  , funParams = funParams'
-                  --, locals = concat $ sequence locals'
-                  , locals = foldr (\a b -> b ++ fromMaybe [] ((: []) <$> a)) [] locals'
-                  , funBody = funBody'
-                  , funType = funType'
-                  }
+  return ( Function { funName = funName'
+                    , funInports = inPorts
+                    , funOutports = outPorts
+                    , funParams = funParams'
+                      --, locals = concat $ sequence locals'
+                    , locals = foldr (\a b -> b ++ fromMaybe [] ((: []) <$> a)) [] locals'
+                    , funBody = funBody'
+                    , funType = funType'
+                    }
+         , Map.elems nameSet
+         )
     where
       mapFunParam :: Ident -> Decl
       -- FIXME: Kind of useless right now. The Decl in order to enable future
@@ -372,18 +373,22 @@ unifyPorts ps = foldM merge [] (sortOn fst ps)
       | otherwise = return (ip':ips)
     merge [] ip = return [ip]
 
-bindNetwork :: BindM Network
+bindNetwork :: BindM (Network, [DType])
 bindNetwork = do
   busList <- Map.elems <$> asks A.busses
   insts <- Map.elems <$> asks A.instances >>= mapM bindInstance
   instPorts <- unifyPorts $ map genPortMap insts
-  funs <- Map.elems <$> asks A.funStates >>= mapM (`withCurBlock` bindFunction instPorts)
+  (funs, types) <- unzip <$> (Map.elems <$> asks A.funStates >>= mapM (`withCurBlock` bindFunction instPorts))
+  -- let (funs', types) = unzip funs
   netName' <- asks A.netName
-  return Network { functions = funs
-                 , busses = busList
-                 , instances = insts
-                 , netName = netName'
-                 }
+  return ( Network { functions = funs
+                   , busses = busList
+                   , instances = insts
+                   , netName = netName'
+                   }
+           -- Remove duplicates
+         , toList . fromList $ concat types
+         )
 
-bindPyMod :: A.AnState -> Either BindErr Network
+bindPyMod :: A.AnState -> Either BindErr (Network, [DType])
 bindPyMod s = runBindM s bindNetwork

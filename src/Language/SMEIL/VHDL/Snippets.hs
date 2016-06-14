@@ -9,6 +9,7 @@ module Language.SMEIL.VHDL.Snippets
        , tbClockedMap
        , tbSignals
        , tbResetWait
+       , typesHead
        , clkProcess
        , testerDecls
        , fieldCheck
@@ -125,96 +126,10 @@ clockedMap = empty $+$ text "rst => rst," $+$ text "clk => clk"
 --   $+$ pp Package <+> text "SYSTEM_TYPES" <+> Is
 --   $+$ indent ( pp Subtype <+> text "T_SYSTEM_BOOL" <+> 
 
-smeTypes :: Doc
-smeTypes = text [here|
-library ieee;
+typesHead :: Doc
+typesHead = text [i|library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
-
-package sme_types is
-  subtype bool_t is std_logic;
-
-  subtype u8_t  is std_logic_vector(7 downto 0);
-  subtype u16_t is std_logic_vector(15 downto 0);
-  subtype u32_t is std_logic_vector(31 downto 0);
-  subtype u64_t is std_logic_vector(63 downto 0);
-
-  subtype i8_t  is std_logic_vector(7 downto 0);
-  subtype i16_t is std_logic_vector(15 downto 0);
-  subtype i32_t is std_logic_vector(31 downto 0);
-  subtype i64_t is std_logic_vector(63 downto 0);
-  -- converts an integer to u8
-  pure function u8(v: integer) return u8_t;
-  -- converts an integer to u16
-  pure function u16(v: integer) return u16_t;
-  -- converts an integer to u32
-  pure function u32(v: integer) return u32_t;
-  -- converts an integer to u64
-  pure function u64(v: integer) return u64_t;
-
-  -- converts an integer to i8
-  pure function i8(v: integer) return i8_t;
-  -- converts an integer to i16
-  pure function i16(v: integer) return i16_t;
-  -- converts an integer to i32
-  pure function i32(v: integer) return i32_t;
-  -- converts an integer to i64
-  pure function i64(v: integer) return i64_t;
-
-
-end sme_types;
-
-package body sme_types is
-
-  -- converts an integer to u8
-  pure function u8(v: integer) return u8_t is
-  begin
-    return std_logic_vector(to_unsigned(v, u8_t'length));
-  end u8;
-
-  -- converts an integer to u16
-  pure function u16(v: integer) return u16_t is
-  begin
-    return std_logic_vector(to_unsigned(v, u16_t'length));
-  end u16;
-
-  -- converts an integer to u32
-  pure function u32(v: integer) return u32_t is
-  begin
-    return std_logic_vector(to_unsigned(v, u32_t'length));
-  end u32;
-
-  -- converts an integer to u64
-  pure function u64(v: integer) return u64_t is
-  begin
-    return std_logic_vector(to_unsigned(v, u64_t'length));
-  end u64;
-
-  -- converts an integer to i8
-  pure function i8(v: integer) return i8_t is
-  begin
-    return std_logic_vector(to_signed(v, i8_t'length));
-  end i8;
-
-  -- converts an integer to i16
-  pure function i16(v: integer) return i16_t is
-  begin
-    return std_logic_vector(to_signed(v, i16_t'length));
-  end i16;
-
-  -- converts an integer to i32
-  pure function i32(v: integer) return i32_t is
-  begin
-    return std_logic_vector(to_signed(v, i32_t'length));
-  end i32;
-
-  -- converts an integer to i64
-  pure function i64(v: integer) return i64_t is
-  begin
-    return std_logic_vector(to_signed(v, i64_t'length));
-  end i64;
-
-end sme_types;
 |]
 
 csvUtil :: Doc

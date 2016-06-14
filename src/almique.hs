@@ -52,9 +52,9 @@ main = do
             Left err -> do
               print err
               exitWith $ ExitFailure 1
-            Right network' -> do
+            Right (network', types) -> do
               print network'
-              let plan = makePlan network'
+              let plan = makePlan network' types
               execPlan plan
     Nothing -> do
         putStrLn "Usage: almique <file.py>"
