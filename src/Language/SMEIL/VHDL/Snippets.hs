@@ -105,10 +105,10 @@ assert are_strings_equal(tmp, "${s}") report "Field #" & integer'image(fieldno) 
 fieldno := fieldno + 1;
 |]
 
-valCheck :: Doc -> Doc
-valCheck s = text [i|read_csv_field(L, tmp);
+valCheck :: Doc -> Doc -> Doc
+valCheck s f = text [i|read_csv_field(L, tmp);
 if not are_strings_equal(tmp, "U") then
-  assert are_strings_equal(int_image(${s}), tmp) report "Unexpected value of ${s} in cycle " & integer'image(clockcycle) & ". Actual value was: " & int_image(${s}) & " but expected " & truncate(tmp) severity Error;
+  assert are_strings_equal(${f}(${s}), tmp) report "Unexpected value of ${s} in cycle " & integer'image(clockcycle) & ". Actual value was: " & ${f}(${s}) & " but expected " & truncate(tmp) severity Error;
 end if;
 fieldno := fieldno + 1;
 |]

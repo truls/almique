@@ -7,11 +7,15 @@ where
 
 import Language.SMEIL.AST
 
+import Debug.Trace
+
 -- VERY simple for now. Shouldn't be hard to do things a little bit better
 -- e.g.by unifying integer types of different sizes to the biggest of the two
 unify :: DType -> DType -> DType
 unify a b
   | a == b = a
+  | a == AnyType && b /= AnyType = b
+  | a /= AnyType && b == AnyType = a
   | otherwise = AnyType
 
 data Signedness = IsSigned | IsUnsigned
@@ -43,7 +47,10 @@ instance TypeOf SMEBool where
 
 instance TypeOf Expr where
   typeOf BinOp { left = l
-               , right = r } = unify (typeOf l) (typeOf r)
+               , right = r } = unify (intToAny l) (intToAny r)
+    where
+      intToAny (Prim (Num (SMEInt _))) = AnyType
+      intToAny a = typeOf a
   typeOf UnOp { unOpVal = v } = typeOf v
   typeOf (Prim p) = typeOf p
   typeOf (Paren e) = typeOf e

@@ -7,15 +7,16 @@ module Almique.Output
 
 import Text.PrettyPrint
 import Control.Monad.Reader
-import Data.Maybe (fromMaybe, isNothing)
-import Data.List (sort)
+import Control.Arrow (first, (***))
+import Data.Maybe (fromMaybe)
+import Data.List (sortOn)
 
 import System.Directory
 
 import Language.SMEIL
 import Language.SMEIL.VHDL
 
-import Debug.Trace
+--import Debug.Trace
 
 type PortList = Doc
 type PortMap = Doc
@@ -109,14 +110,15 @@ architecture s signals body = pp Architecture <+> text "RTL" <+> pp Of <+> text 
   $+$ indent body
   $+$ pp EndArchitecture <> semi
 
-makeVarVal :: Maybe Expr -> Doc
-makeVarVal v = fromMaybe empty ((\e -> space <> pp Gets <+> assignCast (typeOf e) (pp e)) <$> v)
+makeVarVal :: Maybe Expr -> DType -> Doc
+makeVarVal v t = fromMaybe empty ((\e -> space <> pp Gets
+                                         <+> assignCast (typeOf e) (pp' e t)) <$> v)
 
 makeVar :: Decl -> Doc
-makeVar (Decl (NamedVar _ty n) t v) = pp Variable <+> text n <> colon
-  <+> pp t  <> makeVarVal v <> semi
-makeVar (Decl (ConstVar _ty n) t v) = pp Constant <+> text n <> colon
-  <+> pp t <> makeVarVal v <> semi
+makeVar (Decl (NamedVar ty n) t v) = pp Variable <+> text n <> colon
+  <+> pp t  <> makeVarVal v ty <> semi
+makeVar (Decl (ConstVar ty n) t v) = pp Constant <+> text n <> colon
+  <+> pp t <> makeVarVal v ty <> semi
 makeVar _ = empty
 
 funSignalReset :: (Ident, Ident) -> Reader Network Doc
@@ -188,20 +190,20 @@ inst Instance { instName = name
     where
       toRealBus bs ps = [(fst p, b) | (b, p) <- zip bs ps]
 
-topBusPorts :: Bus -> Reader Network [(Doc, Doc)]
+topBusPorts :: Bus -> Reader Network [(Doc, DType)]
 topBusPorts b = do
   nn <- asks netName
   let bn = busName b
   let bp = busPorts b
-  return $ map (\(s, t) -> (underscores [nn, bn, s], pp t)) bp
+  return $ map (\(s, t) -> (underscores [nn, bn, s], t)) bp
 
 topPorts :: Reader Network Doc
 topPorts = do
   sigdefs <- asks busses >>= mapM topBusPorts
   return $ sigDefs $ concat sigdefs
   where
-    sigDefs :: [(Doc, Doc)] -> Doc
-    sigDefs = vcat . map (\(s, t) -> s  <> colon <+> pp InOut <+> t <> semi)
+    sigDefs :: [(Doc, DType)] -> Doc
+    sigDefs = vcat . map (\(s, t) -> s  <> colon <+> pp InOut <+> pp t <> semi)
 
 makeTopLevel :: Reader Network Doc
 makeTopLevel = do
@@ -214,22 +216,28 @@ makeTopLevel = do
 tbSigDefs :: Reader Network [Doc]
 tbSigDefs = do
   sigs <- asks busses >>= mapM topBusPorts
-  return $ map (\(n, t) -> pp Signal <+> n <> colon <+> t <> semi) (concat sigs)
+  return $ map (\(n, t) -> pp Signal <+> n <> colon <+> pp t <> semi) (concat sigs)
 
 --tbSigMaps :: Reader Network [Doc]
 --tbSigMaps 
 
-tbBuss :: Reader Network [Doc]
+tbBuss :: Reader Network [(Doc, Doc)]
 tbBuss = do
   a <- asks busses >>= mapM topBusPorts
   -- HACK: We need trace file busses to be in alphabetical order to match trace
   -- CSV file header fields and Doc isn't an instance of Ord. We cant move this
   -- to the more general functions since alphabetical ordering of signals
   -- probably isn't ideal everywhere.
-  return $ map text $ sort $ map (render . fst) $ concat a
+  return $ map (first text) $ sortOn fst $ map (render *** tbValImage) $ concat a
 
 tbSigMaps :: Reader Network [Doc]
-tbSigMaps = map (\n -> n <+> pp MapTo <+> n <> comma) <$> tbBuss
+tbSigMaps = map (\(n, _) -> n <+> pp MapTo <+> n <> comma) <$> tbBuss
+
+tbValImage :: DType -> Doc
+tbValImage BoolType = pp "std_logic'image"
+tbValImage t = case sign t of
+  IsSigned -> pp "int_image"
+  IsUnsigned -> pp "uint_image"
 
 makeTB :: Reader Network Doc
 makeTB = do
@@ -260,13 +268,13 @@ makeTB = do
                         $+$ pp Else
                         $+$ indent (pp (ReadLine (pp "F") (pp "L")) <> semi
                                     $+$ pp "fieldno" <+> pp Gets <+> pp "0" <> semi
-                                    $+$ vcat (map fieldCheck buss)
-                                    $+$ tbResetWait
+                                    $+$ vcat (map (fieldCheck . fst) buss)
+                                     $+$ tbResetWait
                                     $+$ pp While <+> pp Not <+> pp (EndFile (pp "F")) <+> pp Loop
                                     $+$ indent (pp (ReadLine (pp "F") (pp "L")) <> semi
                                                 $+$ pp Wait <+> pp Until <+> pp (RisingEdge (pp "clock")) <> semi
                                                 $+$ pp "fieldno" <+> pp Gets <+> pp "0" <> semi
-                                                $+$ vcat (map valCheck buss)
+                                                $+$ vcat (map (uncurry valCheck) buss)
                                                 $+$ pp "clockcycle" <+> pp Gets <+> pp "clockcycle" <+> pp PlusOp <+> pp "1" <> semi
                                               )
                                     $+$ pp EndLoop <> semi

@@ -13,6 +13,7 @@ module Language.SMEIL.VHDL.Pretty
        , typeName
        , Pretty
        , pp
+       , pp'
        , VHDLKw(..)
        , VHDLFuns(..)
        , VHDLAttribs(..)
@@ -23,6 +24,8 @@ import Data.Char (toLower)
 import Text.PrettyPrint
 
 import Language.SMEIL
+
+import Debug.Trace
 
 indentWidth :: Int
 indentWidth = 2
@@ -147,7 +150,7 @@ instance Pretty String where
 
 primDefaultVal :: DType -> Doc
 primDefaultVal t@(IntType _) = assignCast t (pp $ ToSigned (pp "0") (pp $ Length (pp t)))
-primDefaultVal t@(UIntType _) = assignCast t (pp $ ToUnsigned (pp "0") (pp $ Length (pp t)))
+primDefaultVal t@(UIntType _) =  assignCast t (pp $ ToUnsigned (pp "0") (pp $ Length (pp t)))
 primDefaultVal (FloatType _)  = pp "0.0"
 primDefaultVal BoolType = pp "'0'"
 primDefaultVal AnyType = empty
@@ -160,7 +163,8 @@ toSignedness _ d = d
 
 primCast :: PrimVal -> DType -> Doc
 primCast (Num i@(SMEInt _l)) t = toSignedness t (pp i)
-primCast (Num f@(SMEFloat _)) t = pp f
+primCast (Num f@(SMEFloat _)) _t = pp f
+primCast (Bool b) _t = pp b
 primCast o _t = pp o
 
 instance Pretty PrimVal where
@@ -173,8 +177,8 @@ instance Pretty SMENum where
   pp (SMEFloat f) = double f
 
 instance Pretty SMEBool where
-  pp SMETrue = text "true"
-  pp SMEFalse = text "false"
+  pp SMETrue = text "'1'"
+  pp SMEFalse = text "'0'"
 
 typeName :: DType -> Doc
 typeName (IntType l) = text "i" <> pp l
@@ -201,8 +205,8 @@ assignCast :: DType -> Doc -> Doc
 assignCast (IntType _) d = pp $ StdLogicVector d
 assignCast (UIntType _) d = pp $ StdLogicVector d
 assignCast (FloatType _l) d = pp "-- Floats not supported" <+> d
-assignCast BoolType d = pp "-- Bools not supported" <+> d
-assignCast AnyType d = d
+assignCast BoolType d =  d
+assignCast AnyType d = pp "ANY " <> d
 
 instance Pretty Stmt where
   pp (Assign v e) = case v of
@@ -210,9 +214,9 @@ instance Pretty Stmt where
     n@(BusVar t _ _) -> pp n <+> pp BusGets <+> assignCast t (pp' e t) <> semi
     (ConstVar _ _) -> text "-- Assignment to constvar attempted"
     (ParamVar _ _) -> text "-- Assignment to generic value"
-  pp (Cond ((e, s):cs) es) = pp If <+> pp e <+> pp Then $+$
+  pp (Cond ((e, s):cs) es) = pp If <+> pp' e (typeOf e) <+> pp Then $+$
     indent (pp s) $+$
-    vcat (map (\(e', s') -> (pp Elsif <+> pp e' <+> pp Then) $+$
+    vcat (map (\(e', s') -> (pp Elsif <+> pp' e' (typeOf e') <+> pp Then) $+$
                             indent (pp s')) cs) $+$ maybeElse es $+$ pp EndIf <> semi
     where
       maybeElse s'@(Stmts ss)
@@ -226,8 +230,8 @@ varCast :: DType -> Doc -> Doc
 varCast (IntType _) d = pp $ Signed d
 varCast (UIntType _) d = pp $ Unsigned d
 varCast (FloatType _) d = pp "-- Floats not supported" <+> d
-varCast BoolType d = pp "-- Bools not supported" <+> d
-varCast AnyType d = d
+varCast BoolType d = d
+varCast AnyType d = pp "ANY " <+> d
 
 -- Params that must evaluate a primitive and constant VHDL value should be
 -- printed without type annotations

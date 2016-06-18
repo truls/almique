@@ -9,11 +9,11 @@ module Almique.Binder
 import Control.Monad.Reader
 import Control.Monad.Except
 import qualified Data.Map.Strict as Map hiding (map)
-import qualified Data.Set as Set
+import qualified Data.Set as Set hiding (delete)
 import Data.Maybe (isNothing, fromMaybe, catMaybes)
-import Data.List
+import Data.List hiding (delete)
 import Data.Monoid
-import Data.Set (toList, fromList)
+import Data.Set (toList, fromList, delete)
 
 import Language.SMEIL
 import qualified Almique.Analyzer as A
@@ -377,7 +377,7 @@ bindNetwork :: BindM (Network, [DType])
 bindNetwork = do
   busList <- Map.elems <$> asks A.busses
   insts <- Map.elems <$> asks A.instances >>= mapM bindInstance
-  instPorts <- unifyPorts $ map genPortMap insts
+  instPorts <- (unifyPorts . map genPortMap) insts
   (funs, types) <- unzip <$> (Map.elems <$> asks A.funStates >>= mapM (`withCurBlock` bindFunction instPorts))
   -- let (funs', types) = unzip funs
   netName' <- asks A.netName
@@ -387,7 +387,7 @@ bindNetwork = do
                    , netName = netName'
                    }
            -- Remove duplicates
-         , toList . fromList $ concat types
+         , toList . delete BoolType . fromList $ concat types
          )
 
 bindPyMod :: A.AnState -> Either BindErr (Network, [DType])
