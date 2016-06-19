@@ -29,9 +29,6 @@ instance TypeOf Variable where
   typeOf (BusVar t _ _) = t
   typeOf (NamedVar t _ ) = t
 
-instance TypeOf Bus where
-  typeOf Bus { busDtype = t } = t
-
 instance TypeOf PrimVal where
   typeOf (Num n) = typeOf n
   typeOf (Bool b) = typeOf b

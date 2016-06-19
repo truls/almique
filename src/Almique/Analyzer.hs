@@ -309,7 +309,7 @@ busArgList (PListEls e) = mapM busCh e
     busCh (PBusDefType t n) = case parseBusAnnot t of
       Just ty -> return (unquote n, ty)
       Nothing -> throwError "Invalid type name in bus channel definition"
-    -- TODO: Maybe support a default type here
+    busCh (PString1 s) = return (unquote s, SMEIL.IntType 32)
     busCh _ = throwError "Invalid expression in bus channel list"
 busArgList _ = throwError "Not a list"
 
@@ -535,16 +535,13 @@ genNetwork name stm = when (funName "wire" stm) (mapBlockStms networkDef stm)
     networkDef (PClassAssign varName (PVarIdent "Bus")
                 [ ArgExpr { arg_expr = PString1 bname }
                 , ArgExpr { arg_expr = parlist }
-                , ArgExpr { arg_expr = PVarIdent btype }
                 ]
                ) = do
-      smetype <- trace "Got bus def" mapType btype
       ports <- busArgList parlist
       addBindingIS (SMEIL.BusVar SMEIL.AnyType varName "") (Bound SMEIL.AnyType SMEIL.NopExpr)
       addBus varName SMEIL.Bus { SMEIL.busName = unquote bname
-                          , SMEIL.busDtype = smetype
-                          , SMEIL.busPorts = ports
-                          }
+                               , SMEIL.busPorts = ports
+                               }
 
     networkDef (PClassAssign varName (PVarIdent instof)
                 ( ArgExpr { arg_expr = PString1 iname }

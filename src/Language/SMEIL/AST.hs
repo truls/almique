@@ -65,7 +65,6 @@ data Network = Network { netName :: Ident
 -- type Network = [Function]
 
 data Bus = Bus { busName :: Ident
-               , busDtype :: DType
                , busPorts :: [(Ident, DType)]
                }
          deriving (Eq, Show)
