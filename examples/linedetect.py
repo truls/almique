@@ -113,7 +113,7 @@ class Pixel(Function):
 class System(Network):
     def wire(self, pixels, buffer, rate, simdata, result):
         controlbus = Bus("Control", [t.b('readout'),
-                                     'selector',
+                                     t.u8('selector'),
                                      t.u8('data')])
         controlbus['readout'] = 0
         controlbus['selector'] = 0
