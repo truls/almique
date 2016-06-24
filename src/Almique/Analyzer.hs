@@ -300,7 +300,7 @@ stringifyList (PListEls els) = mapM el els
     el (PString1 s) = return $ unquote s
     el (PVarIdent i) = return i
     el _ = throwError "Only lists consisting entirely of variable names, strings or numbers are supported"
-stringifyList _ = throwError "Not a list"
+stringifyList l = throwError $ "Not a list " ++ show l
 
 busArgList :: Expr SrcSpan -> AnM [(String, SMEIL.DType)]
 busArgList (PListEls e) = mapM busCh e

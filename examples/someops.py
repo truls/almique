@@ -40,7 +40,7 @@ class Printer(External):
     def run(self):
         print(self.addbus["res"], self.subbus["res"], self.mulbus["res"])
 
-class AllOps(Network):
+class SomeOps(Network):
     def wire(self):
         valbus = Bus("ValueBus", [t.u7("val1"), t.u7("val2")])
         valbus["val1"] = 0
@@ -69,7 +69,7 @@ class AllOps(Network):
 
 def main():
     sme = SME()
-    sme.network = AllOps("AllOps")
+    sme.network = SomeOps("SomeOps")
     sme.network.clock(200)
 
 if __name__ == "__main__":

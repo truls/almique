@@ -224,7 +224,7 @@ instance Pretty Stmt where
         | otherwise = empty
 
   pp (Cond [] _) = empty
-  pp NopStmt = text ";"
+  pp NopStmt = text "--"
 
 varCast :: DType -> Doc -> Doc
 varCast (IntType _) d = pp $ Signed d

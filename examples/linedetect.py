@@ -1,10 +1,10 @@
-from sme import Network, Function, External, Bus, SME
-from sme import ConstrainedTypes
-from sme import ConventionTypes
+from sme import Network, Function, External, Bus, SME, Types
 import numpy as np
 import matplotlib.pylab as pylab
 
-#debug = lambda x: pass
+t = Types()
+
+# debug = lambda x: pass
 debug = print
 
 
@@ -17,7 +17,7 @@ class Reader(External):
     def run(self):
         if self.controlbus["data"] == 1:
             self.results[self.cnt] = self.databus["data"]
-            #debug(self.results[self.cnt])
+            # debug(self.results[self.cnt])
             self.cnt += 1
             if self.cnt == len(self.results):
                 self.cnt = 0
@@ -32,8 +32,8 @@ class Source(External):
         self.phase_incr = 0
 
     def run(self):
-        if self.controlbus["readout"] == 1:
-            self.indatabus["valid"] = 1
+        if self.controlbus["readout"] == True:
+            self.indatabus["valid"] = True
             if self.phase_incr == 0:
                 self.simdataidx += 1
                 self.phase_incr = 1
@@ -41,7 +41,7 @@ class Source(External):
             self.indatabus["data"] = self.simdata[self.controlbus["selector"], self.simdataidx - 1]
 
         else:
-            self.indatabus["valid"] = 0
+            self.indatabus["valid"] = False
             self.phase_incr = 0
 
 
@@ -49,20 +49,20 @@ class Controller(Function):
     def setup(self, ins, outs, rate, pixels):
         self.map_outs(outs, "controlbus")
 
-        self.samplecnt = 0
-        self.readcnt = 0
-        self.readout = 0
+        self.samplecnt = 0  # type: t.u8
+        self.readcnt = 0  # type: t.u8
+        self.readout = 0  # type: t.u8
 
         self.rate = rate
         self.pixels = pixels
 
     def run(self):
-        #debug("Rate samplecnt, rate is, pixels", self.samplecnt, self.rate, self.pixels)
+        # debug("Rate samplecnt, rate is, pixels", self.samplecnt, self.rate, self.pixels)
         if self.samplecnt == self.rate:
             if self.readout == self.pixels:
                 self.readcnt = 1
                 self.samplecnt = 1
-                self.controlbus["readout"] = 0
+                self.controlbus["readout"] = False
                 self.controlbus["data"] = 0
                 self.controlbus['selector'] = self.readout - 1
                 self.readout = 0
@@ -73,11 +73,11 @@ class Controller(Function):
                 else:
                     self.controlbus["selector"] = self.readout - 1
                     self.readout += 1
-                self.controlbus["readout"] = 1
+                self.controlbus["readout"] = True
                 self.controlbus["data"] = 0
 
         else:
-            self.controlbus["readout"] = 0
+            self.controlbus["readout"] = False
             if self.readcnt < self.pixels + 1:
                 self.controlbus["selector"] = self.readcnt
                 self.controlbus["data"] = 1
@@ -94,37 +94,36 @@ class Pixel(Function):
     def setup(self, ins, outs, id):
         self.map_ins(ins, "controlbus", "indatabus")
         self.map_outs(outs, "databus")
-        self.data = 0
-        self.cnt = 0
-        #self.simdata = simdata
+        self.data = 0  # type: t.u8
+        self.cnt = 0  # type: t.u8
+
         self.id = id
 
     def run(self):
-        #debug(self.controlbus["selector"])
-        if self.controlbus['readout'] == 1 and self.controlbus["selector"] == self.id and self.indatabus["valid"] == 1:
-            #self.data = self.simdata[self.id, self.cnt]
+        # debug(self.controlbus["selector"])
+        if self.controlbus['readout'] == True and self.controlbus["selector"] == self.id and self.indatabus["valid"] == True:
             self.data = self.indatabus["data"]
-            #debug("Id", self.id, "Reading out data", self.data)
+            # debug("Id", self.id, "Reading out data", self.data)
             self.cnt += 1
         if self.controlbus['selector'] == self.id:
-            #debug("Writing data", self.data)
+            # debug("Writing data", self.data)
             self.databus['data'] = self.data
 
 
 class System(Network):
     def wire(self, pixels, buffer, rate, simdata, result):
-        controlbus = Bus("Control", [t.boolean('readout'),
-                                     t.u8('selector'),
-                                     t.u8('data')], int)
+        controlbus = Bus("Control", [t.b('readout'),
+                                     'selector',
+                                     t.u8('data')])
         controlbus['readout'] = 0
         controlbus['selector'] = 0
         controlbus['data'] = 0
         self.tell(controlbus)
-        databus = Bus('DataBus', [t.u8('data')], int)
+        databus = Bus('DataBus', [t.u8('data')])
         self.tell(databus)
 
-        indatabus = Bus("InDataBus", [t.boolean("valid"), t.u8("data")], int)
-        indatabus["valid"] = 0
+        indatabus = Bus("InDataBus", [t.b("valid"), t.u8("data")])
+        indatabus["valid"] = False
         self.tell(indatabus)
 
         pixels = 151

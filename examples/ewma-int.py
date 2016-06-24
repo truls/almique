@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-from sme import External, Network, Function, Bus, SME
+from sme import External, Network, Function, Bus, SME, Types
+t = Types()
 #from baseavg import *
 import numpy as np
 from matplotlib import pyplot as plt
@@ -63,13 +64,13 @@ class EWMA(Network):
         count = len(indata)
 
 
-        bus1 = Bus("bus1", ["val", "valid"], int)
+        bus1 = Bus("bus1", ["val", t.b("valid")])
         bus1["valid"] = 0
         self.tell(bus1)
-        short = Bus("short", ["val", "valid"], int)
+        short = Bus("short", ["val", t.b("valid")])
         self.tell(short)
         short["valid"] = 0
-        longb = Bus("longb", ["val", "valid"], int)
+        longb = Bus("longb", ["val", t.b("valid")])
         self.tell(longb)
         longb["valid"] = 0
 
