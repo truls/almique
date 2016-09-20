@@ -16,7 +16,7 @@ import System.Directory
 import Language.SMEIL
 import Language.SMEIL.VHDL
 
---import Debug.Trace
+import Debug.Trace
 
 type PortList = Doc
 type PortMap = Doc
@@ -42,9 +42,6 @@ concatPath OutputFile { dir = d
                       , file = f
                       } = d ++ "/" ++ f
 
--- FIXME: This is really bad. Ideally, we shouldn't have to do this kind of
--- cross referencing when generating VHDL from our AST. Maybe a symptom of
--- poor data structure design choices?
 findPred :: forall a b. (Network -> [a])
             -> (a -> Bool)
             -> (a -> b)
@@ -97,11 +94,18 @@ entPorts Function { funInports = ins
         map (\(s, t) -> s <> colon <+> pp d <+> pp t <> semi) portList
 
 -- TODO: Support other types than integer here
-entGenerics :: Function -> Doc
-entGenerics Function { funParams = p } =
-  vcat $ punctuate semi $ map (\v -> pp v <> colon <+> pp Integer) (getVars p)
+entGenerics :: Function -> FunType -> Doc
+entGenerics Function { funParams = [] } _ =
+  empty
+entGenerics Function { funParams = p } ft =
+  skeletonComment ft $ vcat $ punctuate semi $ map (\v -> pp v <> colon <+> pp Integer <> skeletonDefaults ft) (getVars p)
   where
     getVars vs = [ v | (Decl v _ _) <- vs ]
+    skeletonDefaults Skeleton = text " := 0"
+    skeletonDefaults _ = text ""
+    skeletonComment Skeleton d = text "-- Implicit default generic values for skeleton functions"
+                                 $+$ d
+    skeletonComment _ d = d
 
 architecture :: Ident -> SignalList -> Doc -> Doc
 architecture s signals body = pp Architecture <+> text "RTL" <+> pp Of <+> text s <+> pp Is
@@ -114,10 +118,15 @@ makeVarVal :: Maybe Expr -> DType -> Doc
 makeVarVal v t = fromMaybe empty ((\e -> space <> pp Gets
                                          <+> assignCast (typeOf e) (pp' e t)) <$> v)
 
+commentAnyType :: DType -> DType -> Doc
+commentAnyType t1 t2 = if ((t1 == AnyType) || (t2 == AnyType))
+                       then text "-- "
+                       else text ""
+
 makeVar :: Decl -> Doc
-makeVar (Decl (NamedVar ty n) t v) = pp Variable <+> text n <> colon
-  <+> pp t  <> makeVarVal v ty <> semi
-makeVar (Decl (ConstVar ty n) t v) = pp Constant <+> text n <> colon
+makeVar (Decl (NamedVar ty n) t v) = commentAnyType t ty <> pp Variable <+> text n <> colon
+                                     <+> pp t  <> makeVarVal v ty <> semi
+makeVar (Decl (ConstVar ty n) t v) = commentAnyType t ty <> pp Constant <+> text n <> colon
   <+> pp t <> makeVarVal v ty <> semi
 makeVar _ = empty
 
@@ -128,7 +137,8 @@ funSignalReset p = do
   return $ vcat $ map (\(a, t) -> a <+> pp BusGets <+> primDefaultVal t <> semi) ports
 
 funVarReset :: Decl -> Doc
-funVarReset (Decl v@(NamedVar ty _) _ _) = pp v <+> pp Gets <+> primDefaultVal ty <> semi
+funVarReset (Decl v@(NamedVar ty _) _ _) = commentAnyType ty ty
+                                           <> pp v <+> pp Gets <+> primDefaultVal ty <> semi
 funVarReset (Decl (ConstVar _ty _n) _t _v) = empty
 funVarReset _ = empty
 
@@ -218,9 +228,6 @@ tbSigDefs = do
   sigs <- asks busses >>= mapM topBusPorts
   return $ map (\(n, t) -> pp Signal <+> n <> colon <+> pp t <> semi) (concat sigs)
 
---tbSigMaps :: Reader Network [Doc]
---tbSigMaps 
-
 tbBuss :: Reader Network [(Doc, Doc)]
 tbBuss = do
   a <- asks busses >>= mapM topBusPorts
@@ -308,7 +315,7 @@ makeTypeDefs ts = typesHead
       -- natural to unsigned and integer to signed)
     funDefs t = pp "" $+$ pp "-- converts an integer to" <+> typeName t
                 $+$ pp PureFunction <+> typeName t <> parens (pp "v" <> colon <+> pp Integer)
-                      <+> (pp Return <+> pp t <> semi)
+                <+> (pp Return <+> pp t <> semi)
 
     bodyFuns t = pp PureFunction <+> typeName t <> parens (text "v" <> colon
                                                                    <+> pp Integer)
@@ -338,7 +345,7 @@ vhdlExt = flip (++) ".vhdl"
 makeFun :: Function -> Reader Network OutputFile
 makeFun f = do
   let fname = funName f
-  let generics = entGenerics f
+  let generics = entGenerics f $ funType f
   ports <- entPorts f
   procc <- process fname (pp (funBody f))(vcat [ text "clk" <> comma , text "rst" ])
   return OutputFile { dir = ""
