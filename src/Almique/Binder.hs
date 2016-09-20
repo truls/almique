@@ -387,7 +387,7 @@ bindNetwork = do
                    , netName = netName'
                    }
            -- Remove duplicates
-         , toList . delete BoolType . fromList $ concat types
+         , trace (show types) $ toList . delete BoolType . delete AnyType . fromList $ concat types
          )
 
 bindPyMod :: A.AnState -> Either BindErr (Network, [DType])
