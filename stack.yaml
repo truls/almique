@@ -1,0 +1,7 @@
+flags: {}
+extra-package-dbs: []
+packages:
+- '.'
+extra-deps:
+- language-python-0.5.4
+resolver: lts-7.0
