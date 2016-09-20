@@ -42,13 +42,13 @@ class Logger(External):
 
 class Calc(Function):
     def run(self):
-        if self.inbus["valid"] == 1:
+        if self.inbus["valid"] == True:
             #self.prev = (self.inbus["val"] >> self.d) + (self.prev >> self.d) * (self.d_shift - 1)
             self.prev = (self.inbus["val"] >> self.d) + (self.prev >> self.d) * ((1 << self.d) - self.sub)
             self.outbus["val"] = self.prev
-            self.outbus["valid"] = 1
+            self.outbus["valid"] = True
         else:
-            self.outbus["valid"] = 0
+            self.outbus["valid"] = False
 
     def setup(self, ins, outs, decay):
         self.map_ins(ins, "inbus")
@@ -104,7 +104,12 @@ def main():
     sme.network.clock(255)
     #print(outdata)
     x = np.linspace(0, 0.5, len(indata))
-    p = plt.plot(x, indata, x, outdata[0], x, outdata[1])
+    source = plt.plot(x, indata, '0.7', label="Source")
+    short = plt.plot(x, outdata[0], '0.5', label="Short")
+    longd = plt.plot(x, outdata[1], '0.2', label="Long")
+    plt.legend(loc='lower left') #handles=[source, short, longd])
+    plt.ylabel('Value')
+    plt.xlabel('Time')
     pylab.show()
 
 if __name__ == "__main__":
