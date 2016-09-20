@@ -1,11 +1,16 @@
 from sme import Network, Function, External, Bus, SME, Types
 import numpy as np
+import matplotlib.pyplot as plt
 import matplotlib.pylab as pylab
 
 t = Types()
 
-# debug = lambda x: pass
-debug = print
+
+def nop(*args, **kwargs):
+    pass
+
+debug = nop
+# debug = print
 
 
 class Reader(External):
@@ -51,7 +56,7 @@ class Controller(Function):
 
         self.samplecnt = 0  # type: t.u8
         self.readcnt = 0  # type: t.u8
-        self.readout = 0  # type: t.u8
+        self.readoutcnt = 0  # type: t.u8
 
         self.rate = rate
         self.pixels = pixels
@@ -59,20 +64,20 @@ class Controller(Function):
     def run(self):
         # debug("Rate samplecnt, rate is, pixels", self.samplecnt, self.rate, self.pixels)
         if self.samplecnt == self.rate:
-            if self.readout == self.pixels:
+            if self.readoutcnt == self.pixels:
                 self.readcnt = 1
                 self.samplecnt = 1
                 self.controlbus["readout"] = False
                 self.controlbus["data"] = 0
-                self.controlbus['selector'] = self.readout - 1
-                self.readout = 0
+                self.controlbus['selector'] = self.readoutcnt - 1
+                self.readoutcnt = 0
             else:
-                if self.readout == 0:
+                if self.readoutcnt == 0:
                     self.controlbus["selector"] = 0
-                    self.readout += 1
+                    self.readoutcnt += 1
                 else:
-                    self.controlbus["selector"] = self.readout - 1
-                    self.readout += 1
+                    self.controlbus["selector"] = self.readoutcnt - 1
+                    self.readoutcnt += 1
                 self.controlbus["readout"] = True
                 self.controlbus["data"] = 0
 
@@ -108,6 +113,8 @@ class Pixel(Function):
         if self.controlbus['selector'] == self.id:
             # debug("Writing data", self.data)
             self.databus['data'] = self.data
+        #else:
+        #    self.databus['data'] = 
 
 
 class System(Network):
@@ -115,7 +122,7 @@ class System(Network):
         controlbus = Bus("Control", [t.b('readout'),
                                      t.u8('selector'),
                                      t.u8('data')])
-        controlbus['readout'] = 0
+        controlbus['readout'] = False
         controlbus['selector'] = 0
         controlbus['data'] = 0
         self.tell(controlbus)
@@ -616,6 +623,7 @@ def main():
         sme.network.clock(1080*200 + (1080*151))
 
     if show_result:
+        plt.rc("font", size=18)
         result = np.array(result)
         debug(len(result))
         result.shape = (1080, 151)
