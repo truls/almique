@@ -15,8 +15,8 @@ class AddN(Function):
     def setup(self, ins, outs, n):
         self.map_ins(ins, "num")
         self.map_outs(outs, "res")
-        self.n = n  # type: t.u
-        self.c = 4  # type: t.u2
+        self.n = n
+        self.c = 4  # type: t.u3
         self.accum = 0  # type: t.u10
 
     def run(self):
@@ -34,7 +34,7 @@ class Printer(External):
 
 class AddNNet(Network):
     def wire(self):
-        bus1 = Bus("ValueBus", [t.u2("val")])
+        bus1 = Bus("ValueBus", [t.u3("val")])
         bus1["val"] = 0
         self.tell(bus1)
 
