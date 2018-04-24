@@ -3,5 +3,6 @@ extra-package-dbs: []
 packages:
 - '.'
 extra-deps:
-- language-python-0.5.4
-resolver: lts-7.0
+  - git: https://github.com/truls/language-python
+    commit: 0a7b671e7deea6ec731433d1d1ed967daf122535
+resolver: nightly-2018-04-21

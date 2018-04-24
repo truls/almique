@@ -1,4 +1,5 @@
-{-# LANGUAGE TypeSynonymInstances, FlexibleInstances #-}
+{-# LANGUAGE FlexibleInstances    #-}
+{-# LANGUAGE TypeSynonymInstances #-}
 
 module Language.SMEIL.VHDL.Pretty
        ( indent
@@ -20,12 +21,14 @@ module Language.SMEIL.VHDL.Pretty
        )
        where
 
-import Data.Char (toLower)
-import Text.PrettyPrint
+import           Prelude          hiding ((<>))
 
-import Language.SMEIL
+import           Data.Char        (toLower)
+import           Text.PrettyPrint
 
-import Debug.Trace
+import           Language.SMEIL
+
+import           Debug.Trace
 
 indentWidth :: Int
 indentWidth = 2
@@ -142,7 +145,7 @@ instance Pretty Int where
   pp n = integer $ fromIntegral n
 
 instance Pretty Bool where
-  pp True = pp "true"
+  pp True  = pp "true"
   pp False = pp "false"
 
 instance Pretty String where
@@ -157,40 +160,40 @@ primDefaultVal AnyType = empty
 --primDefaultVal t@(SMEInt l) -> assignCast t $ ToSigned (pp 0) (pp l)
 
 toSignedness :: DType -> Doc -> Doc
-toSignedness t@(IntType _) d = pp $ ToSigned d (pp $ Length (pp t))
+toSignedness t@(IntType _) d  = pp $ ToSigned d (pp $ Length (pp t))
 toSignedness t@(UIntType _) d = pp $ ToUnsigned d (pp $ Length (pp t))
-toSignedness _ d = d
+toSignedness _ d              = d
 
 primCast :: PrimVal -> DType -> Doc
-primCast (Num i@(SMEInt _l)) t = toSignedness t (pp i)
+primCast (Num i@(SMEInt _l)) t   = toSignedness t (pp i)
 primCast (Num f@(SMEFloat _)) _t = pp f
-primCast (Bool b) _t = pp b
-primCast o _t = pp o
+primCast (Bool b) _t             = pp b
+primCast o _t                    = pp o
 
 instance Pretty PrimVal where
-  pp (Num n) = pp n
+  pp (Num n)  = pp n
   pp (Bool n) = pp n
   pp EmptyVal = text "This shouldn't be here"
 
 instance Pretty SMENum where
-  pp (SMEInt i) = integer i
+  pp (SMEInt i)   = integer i
   pp (SMEFloat f) = double f
 
 instance Pretty SMEBool where
-  pp SMETrue = text "'1'"
+  pp SMETrue  = text "'1'"
   pp SMEFalse = text "'0'"
 
 typeName :: DType -> Doc
-typeName (IntType l) = text "i" <> pp l
+typeName (IntType l)  = text "i" <> pp l
 typeName (UIntType l) = text "u" <> pp l
-typeName t = pp t
+typeName t            = pp t
 
 instance Pretty DType where
-  pp (IntType l) = text "i" <> pp l <> text "_t"
-  pp (UIntType l) = text "u" <> pp l <> text "_t"
+  pp (IntType l)   = text "i" <> pp l <> text "_t"
+  pp (UIntType l)  = text "u" <> pp l <> text "_t"
   pp (FloatType l) = text "f" <> pp l <> text "_t"
-  pp BoolType = text "bool_t"
-  pp AnyType = text "ANY_TYPE"
+  pp BoolType      = text "bool_t"
+  pp AnyType       = text "ANY_TYPE"
 
 instance Pretty Variable where
   pp (ParamVar _t v) = text v
@@ -202,11 +205,11 @@ instance Pretty Stmts where
   pp (Stmts s) = vcat $ map pp s
 
 assignCast :: DType -> Doc -> Doc
-assignCast (IntType _) d = pp $ StdLogicVector d
-assignCast (UIntType _) d = pp $ StdLogicVector d
+assignCast (IntType _) d    = pp $ StdLogicVector d
+assignCast (UIntType _) d   = pp $ StdLogicVector d
 assignCast (FloatType _l) d = pp "-- Floats not supported" <+> d
-assignCast BoolType d =  d
-assignCast AnyType d = pp "ANY " <> d
+assignCast BoolType d       =  d
+assignCast AnyType d        = pp "ANY " <> d
 
 instance Pretty Stmt where
   pp (Assign v e) = case v of
@@ -227,11 +230,11 @@ instance Pretty Stmt where
   pp NopStmt = text "--"
 
 varCast :: DType -> Doc -> Doc
-varCast (IntType _) d = pp $ Signed d
-varCast (UIntType _) d = pp $ Unsigned d
+varCast (IntType _) d   = pp $ Signed d
+varCast (UIntType _) d  = pp $ Unsigned d
 varCast (FloatType _) d = pp "-- Floats not supported" <+> d
-varCast BoolType d = d
-varCast AnyType d = pp "ANY " <+> d
+varCast BoolType d      = d
+varCast AnyType d       = pp "ANY " <+> d
 
 -- Params that must evaluate a primitive and constant VHDL value should be
 -- printed without type annotations
@@ -302,21 +305,21 @@ instance Pretty Expr where
 
 
 instance Pretty BinOps where
-  pp PlusOp = text "+"
+  pp PlusOp  = text "+"
   pp MinusOp = text "-"
-  pp MulOp = text "*"
-  pp EqOp = text "="
-  pp NeqOp = text "/="
-  pp LeOp = text "<"
-  pp GeOp = text ">"
-  pp LeqOp = text "<="
-  pp GeqOp = text ">="
-  pp DivOp = text "/"
-  pp OrOp = text "or"
-  pp XorOp = text "xor"
-  pp AndOp = text "and"
-  pp SLOp = text "sll"
-  pp SROp = text "srl"
+  pp MulOp   = text "*"
+  pp EqOp    = text "="
+  pp NeqOp   = text "/="
+  pp LeOp    = text "<"
+  pp GeOp    = text ">"
+  pp LeqOp   = text "<="
+  pp GeqOp   = text ">="
+  pp DivOp   = text "/"
+  pp OrOp    = text "or"
+  pp XorOp   = text "xor"
+  pp AndOp   = text "and"
+  pp SLOp    = text "sll"
+  pp SROp    = text "srl"
 
 instance Pretty UnOps where
   pp NotOp = text "not"

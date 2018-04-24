@@ -5,18 +5,20 @@ module Almique.Output
   , makePlan
   ) where
 
-import Text.PrettyPrint
-import Control.Monad.Reader
-import Control.Arrow (first, (***))
-import Data.Maybe (fromMaybe)
-import Data.List (sortOn)
+import           Prelude              hiding ((<>))
 
-import System.Directory
+import           Control.Arrow        (first, (***))
+import           Control.Monad.Reader
+import           Data.List            (sortOn)
+import           Data.Maybe           (fromMaybe)
+import           Text.PrettyPrint
 
-import Language.SMEIL
-import Language.SMEIL.VHDL
+import           System.Directory
 
-import Debug.Trace
+import           Language.SMEIL
+import           Language.SMEIL.VHDL
+
+import           Debug.Trace
 
 type PortList = Doc
 type PortMap = Doc
@@ -29,8 +31,8 @@ type GenericDefs = Doc
 -- TODO: Split into two modules: One for doing the file handling stuff and one
 -- for rendering the actual output
 
-data OutputFile = OutputFile { dir :: FilePath
-                             , file :: FilePath
+data OutputFile = OutputFile { dir    :: FilePath
+                             , file   :: FilePath
                              , output :: Doc
                              }
                   deriving Show
@@ -102,7 +104,7 @@ entGenerics Function { funParams = p } ft =
   where
     getVars vs = [ v | (Decl v _ _) <- vs ]
     skeletonDefaults Skeleton = text " := 0"
-    skeletonDefaults _ = text ""
+    skeletonDefaults _        = text ""
     skeletonComment Skeleton d = text "-- Implicit default generic values for skeleton functions"
                                  $+$ d
     skeletonComment _ d = d
@@ -243,7 +245,7 @@ tbSigMaps = map (\(n, _) -> n <+> pp MapTo <+> n <> comma) <$> tbBuss
 tbValImage :: DType -> Doc
 tbValImage BoolType = pp "std_logic'image"
 tbValImage t = case sign t of
-  IsSigned -> pp "int_image"
+  IsSigned   -> pp "int_image"
   IsUnsigned -> pp "uint_image"
 
 makeTB :: Reader Network Doc
@@ -330,7 +332,7 @@ makeTypeDefs ts = typesHead
         -- of those yet
         toSign :: Doc -> Doc -> VHDLFuns
         toSign d1 d2 = case sign t of
-                         IsSigned -> ToSigned d1 d2
+                         IsSigned   -> ToSigned d1 d2
                          IsUnsigned -> ToUnsigned d1 d2
 
 {-|

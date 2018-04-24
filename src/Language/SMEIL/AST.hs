@@ -25,7 +25,7 @@ module Language.SMEIL.AST
        ) where
 
 type Ident = String
-data SMEdtype = SMEdtype SMENum deriving (Eq, Show)
+newtype SMEdtype = SMEdtype SMENum deriving (Eq, Show)
 
 -- TODO: Maybe add a PrimVal type for un-reducable values (string, numbers, etc..._
 
@@ -55,16 +55,16 @@ instance Ord DType where
 -- data PrimVal = PrimVal SMENum Integer
 --                deriving (Eq, Show)
 
-data Network = Network { netName :: Ident
+data Network = Network { netName   :: Ident
                        , functions :: [Function]
-                       , busses :: [Bus]
+                       , busses    :: [Bus]
                        , instances :: [Instance]
                        }
              deriving (Eq, Show)
 
 -- type Network = [Function]
 
-data Bus = Bus { busName :: Ident
+data Bus = Bus { busName  :: Ident
                , busPorts :: [(Ident, DType)]
                }
          deriving (Eq, Show)
@@ -82,31 +82,32 @@ data FunType = Complete
              | Undecided
              deriving (Eq, Show)
 
-data Function = Function { funName :: Ident
-                         , funInports :: [(Ident, Ident)]
+data Function = Function { funName     :: Ident
+                         , funInports  :: [(Ident, Ident)]
                          , funOutports :: [(Ident, Ident)]
-                         , funParams :: [Decl]
-                         , locals :: [Decl]
-                         , funBody :: Stmts
-                         , funType :: FunType
+                         , funParams   :: [Decl]
+                         , locals      :: [Decl]
+                         , funBody     :: Stmts
+                         , funType     :: FunType
                          }
               deriving (Eq, Show)
 
-data Instance = Instance { instName :: Ident
-                         , instFun :: Ident
+data Instance = Instance { instName   :: Ident
+                         , instFun    :: Ident
                          -- FIXME: Separate type for bus defs?
-                         , inBusses :: [Ident]
-                         , outBusses :: [Ident]
+                         , inBusses   :: [Ident]
+                         , outBusses  :: [Ident]
                          , instParams :: [(Ident, PrimVal)]
                          }
               deriving (Eq, Show)
 
-data Stmts = Stmts [Stmt]
+newtype Stmts = Stmts [Stmt]
            deriving (Eq, Show)
 
--- Hack
+instance Semigroup Stmts where
+  (Stmts a) <> (Stmts b) = Stmts $ a `mappend` b
+
 instance Monoid Stmts where
-  (Stmts a) `mappend` (Stmts b) = Stmts $ a `mappend` b
   mempty = Stmts []
 
 data Stmt = Assign Variable Expr
@@ -150,11 +151,11 @@ nameOf (ParamVar _ n) = n
 instance Eq Variable where
   a == b = nameOf a == nameOf b
 
-data Expr = BinOp { op :: BinOps
-                  , left :: Expr
+data Expr = BinOp { op    :: BinOps
+                  , left  :: Expr
                   , right :: Expr
                   }
-          | UnOp { unOp :: UnOps
+          | UnOp { unOp    :: UnOps
                  , unOpVal :: Expr
                  }
           | Prim PrimVal

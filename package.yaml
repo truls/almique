@@ -1,0 +1,36 @@
+name:                almique
+version:             0.1.0.0
+synopsis:            pySME to VHDL compiler
+description:         A Python SME to VHDL compiler intended to aid quick prototying and testing of hardware designs
+license:             GPL-3
+license-file:        LICENSE
+author:              Truls Asheim
+maintainer:          truls@asheim.dk
+copyright:           Truls Asheim 2016
+category:            Language
+build-type:          Simple
+
+ghc-options:
+  - -Wall
+  - -Wcompat
+  - -Wnoncanonical-monad-instances
+  - -Wnoncanonical-monadfail-instances
+  - -Wredundant-constraints
+  - -Wincomplete-uni-patterns
+  - -O2
+
+dependencies:
+  - base
+  - containers >= 0.5.10.2
+  - directory
+  - extra >= 1.6.3
+  - language-python
+  - mtl >= 2.2.1
+  - pretty
+  - parsec
+  - here
+
+executables:
+  almique:
+    main: almique.hs
+    source-dirs: src
