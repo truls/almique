@@ -1,13 +1,11 @@
-module Language.SMEIL.Typing
+module Language.PySMEIL.Typing
   ( typeOf
   , sizeOf
   , sign
   , Signedness(..))
 where
 
-import Language.SMEIL.AST
-
-import Debug.Trace
+import           Language.PySMEIL.AST
 
 -- VERY simple for now. Shouldn't be hard to do things a little bit better
 -- e.g.by unifying integer types of different sizes to the biggest of the two
@@ -24,22 +22,22 @@ class TypeOf a where
   typeOf :: a -> DType
 
 instance TypeOf Variable where
-  typeOf (ParamVar t _) = t
-  typeOf (ConstVar t _) = t
-  typeOf (BusVar t _ _) = t
+  typeOf (ParamVar t _)  = t
+  typeOf (ConstVar t _)  = t
+  typeOf (BusVar t _ _)  = t
   typeOf (NamedVar t _ ) = t
 
 instance TypeOf PrimVal where
-  typeOf (Num n) = typeOf n
+  typeOf (Num n)  = typeOf n
   typeOf (Bool b) = typeOf b
   typeOf EmptyVal = AnyType
 
 instance TypeOf SMENum where
-  typeOf (SMEInt _) = IntType 32
+  typeOf (SMEInt _)   = IntType 32
   typeOf (SMEFloat _) = FloatType 32
 
 instance TypeOf SMEBool where
-  typeOf SMETrue = BoolType
+  typeOf SMETrue  = BoolType
   typeOf SMEFalse = BoolType
 
 instance TypeOf Expr where
@@ -47,7 +45,7 @@ instance TypeOf Expr where
                , right = r } = unify (intToAny l) (intToAny r)
     where
       intToAny (Prim (Num (SMEInt _))) = AnyType
-      intToAny a = typeOf a
+      intToAny a                       = typeOf a
   typeOf UnOp { unOpVal = v } = typeOf v
   typeOf (Prim p) = typeOf p
   typeOf (Paren e) = typeOf e
@@ -55,13 +53,13 @@ instance TypeOf Expr where
   typeOf NopExpr = AnyType
 
 sizeOf :: DType -> Int
-sizeOf (IntType s) = s
+sizeOf (IntType s)  = s
 sizeOf (UIntType s) = s
-sizeOf _ = 0
+sizeOf _            = 0
 
 sign :: DType -> Signedness
-sign (IntType _) = IsSigned
-sign (UIntType _) = IsUnsigned
-sign BoolType = IsUnsigned
+sign (IntType _)   = IsSigned
+sign (UIntType _)  = IsUnsigned
+sign BoolType      = IsUnsigned
 sign (FloatType _) = IsSigned
-sign AnyType = IsSigned
+sign AnyType       = IsSigned

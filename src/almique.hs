@@ -1,18 +1,18 @@
 module Main (main) where
 
-import System.Environment
-import System.Exit
+import           System.Environment
+import           System.Exit
 -- import Control.Monad.IO.Class
 
 --import Language.SMEIL
-import Almique.Analyzer
-import Almique.Binder
-import Almique.Output
+import           Almique.Analyzer
+import           Almique.Binder
+import           Almique.Output
 
-import Language.Python.Common as Py
-import Language.Python.Version3 as Py3
+import           Language.Python.Common   as Py
+import           Language.Python.Version3 as Py3
 
-import Debug.Trace
+import           Debug.Trace
 
 -- Parsing or analysis error
 data Error = GenErr AnError | ParseErr ParseError
@@ -25,19 +25,19 @@ parseFile path = do
       Left e -> return $ Left $ ParseErr e
       Right (m, c) -> trace ("Comments: " ++ show c) $
         case analyzePyMod m c of
-          Left e -> return $ Left $ GenErr e
+          Left e  -> return $ Left $ GenErr e
           Right r -> return $ Right r
 
 --bind :: AnState -> Either BindErr Function
---bind = 
+--bind =
 
 main :: IO ()
 main = do
   args <- getArgs
-  let path = case args of
-        [fname] -> Just fname
-        _ -> Nothing
-
+  let path =
+        case args of
+          [fname] -> Just fname
+          _       -> Nothing
   case path of
     Just p -> do
       res <- parseFile p
@@ -52,11 +52,10 @@ main = do
             Left err -> do
               print err
               exitWith $ ExitFailure 1
-            Right (network', types) -> do
+            Right (network', _) -> do
               print network'
-              let plan = makePlan network' types
-              execPlan plan
+              writeOutput network'
     Nothing -> do
-        putStrLn "Usage: almique <file.py>"
-        exitWith $ ExitFailure 1
+      putStrLn "Usage: almique <file.py>"
+      exitWith $ ExitFailure 1
   return ()

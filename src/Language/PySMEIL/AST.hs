@@ -1,7 +1,7 @@
 -- Abstract syntax tree of the SME intermediate language used for representing
 -- SME networks
 
-module Language.SMEIL.AST
+module Language.PySMEIL.AST
        ( BinOps(..)
        , UnOps(..)
        , Ident
@@ -115,7 +115,8 @@ data Stmt = Assign Variable Expr
           | NopStmt
           deriving (Eq, Show)
 
-data BinOps = PlusOp
+data BinOps =
+  PlusOp
             | MinusOp
             | MulOp
             | EqOp

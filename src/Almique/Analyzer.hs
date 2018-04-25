@@ -1,5 +1,6 @@
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving, PatternSynonyms #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE OverloadedStrings          #-}
+{-# LANGUAGE PatternSynonyms            #-}
 
 module Almique.Analyzer
        ( analyzePyMod
@@ -12,22 +13,21 @@ module Almique.Analyzer
        )
        where
 
-import qualified Data.Map.Strict as Map
-import qualified Data.IntMap.Strict as IntMap
+import qualified Data.IntMap.Strict       as IntMap
+import qualified Data.Map.Strict          as Map
 --import qualified Data.Set as Set
-import Control.Monad.State.Lazy
-import Control.Monad.Except
-import Control.Monad.Writer
-import Control.Monad.Extra (allM)
-import Data.Maybe
+import           Control.Monad.Except
+import           Control.Monad.Extra      (allM)
+import           Control.Monad.State.Lazy
+import           Control.Monad.Writer
+import           Data.Maybe
 
-import Language.Python.Common as Py hiding (annot, (<>))
-import Language.Python.Common.SrcLocation
+import           Language.Python.Common   as Py hiding (annot, (<>))
 
-import qualified Language.SMEIL as SMEIL
-import Almique.CommentSupport
+import           Almique.CommentSupport
+import qualified Language.PySMEIL         as SMEIL
 
-import Debug.Trace
+import           Debug.Trace
 
 --------------------------------------------------------------------------------
 -- Analysis state data type definition
@@ -39,7 +39,7 @@ type SMEIdent = String
 type AnLog = [String]
 
 data NewInst = NewInst { instBindings :: [ Binding ]
-                       , inst :: SMEIL.Instance
+                       , inst         :: SMEIL.Instance
                        }
              deriving Show
 
@@ -50,13 +50,13 @@ data Binding = Bound SMEIL.DType SMEIL.Expr
              deriving (Show, Eq)
 
 data AnState = AnState { currentBlock :: Maybe FunInterpState
-                       , funStates :: Map.Map SMEIdent FunInterpState
+                       , funStates    :: Map.Map SMEIdent FunInterpState
                                       --, blocks :: Map Ident SMEIL.Function
-                       , busses :: Map.Map SMEIdent SMEIL.Bus
-                       , instances :: Map.Map SMEIdent NewInst
-                       , classesSeen :: [String]
-                       , netName :: SMEIdent
-                       , comments :: IntMap.IntMap String
+                       , busses       :: Map.Map SMEIdent SMEIL.Bus
+                       , instances    :: Map.Map SMEIdent NewInst
+                       , classesSeen  :: [String]
+                       , netName      :: SMEIdent
+                       , comments     :: IntMap.IntMap String
   --                     , nameState :: NameState
                        }
              deriving Show
@@ -118,7 +118,7 @@ runAnM s m = let ((err, logged), fstate) = runState
                        (runWriterT $ runExceptT $ unAnM m) s
                  in
                    case err of
-                     Left e -> Left e
+                     Left e   -> Left e
                      Right () -> Right (fstate, logged)
 
 
@@ -208,7 +208,7 @@ setFunType c = modifyCFun (\s -> s { SMEIL.funType = mapClass c } )
    -- TODO: Avoid this silly mapping by using SMEIL types all over
    mapClass Function = SMEIL.Complete
    mapClass External = SMEIL.Skeleton
-   mapClass Network = SMEIL.Undecided
+   mapClass Network  = SMEIL.Undecided
 
 -- addFunInport :: (SMEIL.Ident, SMEIL.Ident) -> AnM ()
 -- addFunInport i = modifyCFun (\s -> s { SMEIL.funInports = SMEIL.funInports s <> pure i })
@@ -237,7 +237,7 @@ getTypeAnnot a t = do
     Nothing -> return t
     Just s -> case parseVarAnnot s of
       Nothing -> return t
-      Just p -> return p
+      Just p  -> return p
 
 --------------------------------------------------------------------------------
 -- Pattern definitions
@@ -336,7 +336,7 @@ unquote = filter (`notElem` ['"', '\''])
 funName :: String -> Statement SrcSpan -> Bool
 
 funName names Fun {fun_name = PIdent name} = name == names
-funName _ _ = False
+funName _ _                                = False
 
 busDef :: SMEIdent -> SMEIL.Variable
 busDef i = SMEIL.BusVar SMEIL.AnyType i ""
@@ -346,28 +346,28 @@ busDef i = SMEIL.BusVar SMEIL.AnyType i ""
 --------------------------------------------------------------------------------
 
 mapOp :: Op SrcSpan -> AnM SMEIL.BinOps
-mapOp And {} = return SMEIL.AndOp
-mapOp Or {} = return SMEIL.AndOp
-mapOp Plus {} = return SMEIL.PlusOp
-mapOp Minus {} = return SMEIL.MinusOp
-mapOp Multiply {} = return SMEIL.MulOp
-mapOp Equality {} = return SMEIL.EqOp
-mapOp NotEquals {} = return SMEIL.NeqOp
-mapOp LessThan {} = return SMEIL.LeOp
-mapOp GreaterThan {} = return SMEIL.GeOp
-mapOp LessThanEquals {} = return SMEIL.LeqOp
+mapOp And {}               = return SMEIL.AndOp
+mapOp Or {}                = return SMEIL.AndOp
+mapOp Plus {}              = return SMEIL.PlusOp
+mapOp Minus {}             = return SMEIL.MinusOp
+mapOp Multiply {}          = return SMEIL.MulOp
+mapOp Equality {}          = return SMEIL.EqOp
+mapOp NotEquals {}         = return SMEIL.NeqOp
+mapOp LessThan {}          = return SMEIL.LeOp
+mapOp GreaterThan {}       = return SMEIL.GeOp
+mapOp LessThanEquals {}    = return SMEIL.LeqOp
 mapOp GreaterThanEquals {} = return SMEIL.GeqOp
-mapOp Divide {} = return SMEIL.DivOp
-mapOp BinaryOr {} = return SMEIL.OrOp
-mapOp Xor {} = return SMEIL.XorOp
-mapOp BinaryAnd {} = return SMEIL.AndOp
-mapOp ShiftLeft {} = return SMEIL.SLOp
-mapOp ShiftRight {} = return SMEIL.SROp
-mapOp _ = throwError "Unsupported operator"
+mapOp Divide {}            = return SMEIL.DivOp
+mapOp BinaryOr {}          = return SMEIL.OrOp
+mapOp Xor {}               = return SMEIL.XorOp
+mapOp BinaryAnd {}         = return SMEIL.AndOp
+mapOp ShiftLeft {}         = return SMEIL.SLOp
+mapOp ShiftRight {}        = return SMEIL.SROp
+mapOp _                    = throwError "Unsupported operator"
 
 mapUnOp :: Op SrcSpan -> AnM SMEIL.UnOps
 mapUnOp Not {} = return SMEIL.NotOp
-mapUnOp _ = throwError "Unsupported unary operator"
+mapUnOp _      = throwError "Unsupported unary operator"
 
 mapAssignOp :: AssignOp SrcSpan -> AnM (Op SrcSpan)
 mapAssignOp PlusAssign {assignOp_annot = an} = return Plus {op_annot = an}
@@ -379,7 +379,7 @@ mapAssignOp RightShiftAssign {assignOp_annot = an} = return ShiftRight {op_annot
 mapAssignOp _ = throwError "Operator not supported"
 
 mapBool :: Bool -> SMEIL.SMEBool
-mapBool True = SMEIL.SMETrue
+mapBool True  = SMEIL.SMETrue
 mapBool False = SMEIL.SMEFalse
 
 --------------------------------------------------------------------------------
@@ -527,9 +527,9 @@ genNetwork :: String -> Statement SrcSpan -> AnM ()
 genNetwork name stm = when (funName "wire" stm) (mapBlockStms networkDef stm)
   where
     mapType :: String -> AnM SMEIL.DType
-    mapType "int" = return $ SMEIL.IntType 32
+    mapType "int"   = return $ SMEIL.IntType 32
     mapType "float" = return $ SMEIL.FloatType 32
-    mapType s = throwError $ "Unsupported bus type " ++ s
+    mapType s       = throwError $ "Unsupported bus type " ++ s
 
     networkDef :: Statement SrcSpan -> AnM ()
     networkDef (PClassAssign varName (PVarIdent "Bus")
@@ -578,8 +578,8 @@ genNetwork name stm = when (funName "wire" stm) (mapBlockStms networkDef stm)
                 binding <- getBindingIS v
                 case binding of
                   Just b@Bound{} -> return b
-                  Just free -> return $ Binding free
-                  Nothing -> return $ Free SMEIL.AnyType i
+                  Just free      -> return $ Binding free
+                  Nothing        -> return $ Free SMEIL.AnyType i
               _ -> tell ["Invalid expression in bus instantiating 1" ++ show p]
                 >> return (Free SMEIL.AnyType SMEIL.NopExpr)
           evalBinding _ = tell ["Invalid expression in bus instantiation 2"]

@@ -3,6 +3,13 @@ extra-package-dbs: []
 packages:
 - '.'
 extra-deps:
+  - git: https://github.com/truls/libsme
+    commit: 45344cfbb3dc7fcaeced1d03bf19f31379c84fc4
   - git: https://github.com/truls/language-python
     commit: 0a7b671e7deea6ec731433d1d1ed967daf122535
+  - git: https://github.com/truls/language-vhdl-quote
+    commit: 9006aee774e1262a87e472783d74f140711244d8
+  - mainland-pretty-0.7
+  - srcloc-0.5.1.2
+
 resolver: nightly-2018-04-21

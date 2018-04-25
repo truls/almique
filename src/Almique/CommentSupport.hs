@@ -5,16 +5,16 @@ module Almique.CommentSupport
   )
   where
 
-import qualified Data.IntMap as IntMap
-import Data.Maybe (mapMaybe)
+import qualified Data.IntMap                        as IntMap
+import           Data.Maybe                         (mapMaybe)
 
-import Text.Parsec
-import Text.Parsec.String
+import           Text.Parsec
+import           Text.Parsec.String
 
-import Language.Python.Common.Token
-import Language.Python.Common.SrcLocation
+import           Language.Python.Common.SrcLocation
+import           Language.Python.Common.Token
 
-import Language.SMEIL.AST
+import           Language.PySMEIL.AST
 
 type LineMap = IntMap.IntMap String
 
@@ -29,12 +29,12 @@ lineMap = IntMap.fromList . mapMaybe tokMap
 
 parseVarAnnot :: String -> Maybe DType
 parseVarAnnot s = case parse typeParser "" s of
-  Left _ -> Nothing
+  Left _  -> Nothing
   Right r -> Just r
 
 parseBusAnnot :: String -> Maybe DType
 parseBusAnnot s = case parse typeNameParser "" s of
-  Left _ -> Nothing
+  Left _  -> Nothing
   Right r -> Just r
 
 lexeme :: Parser a -> Parser a

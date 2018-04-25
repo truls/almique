@@ -1,405 +1,193 @@
-{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE FlexibleInstances    #-}
+{-# LANGUAGE RecordWildCards      #-}
+{-# LANGUAGE TypeSynonymInstances #-}
 
 module Almique.Output
-  ( execPlan
-  , makePlan
+  (writeOutput
   ) where
 
-import           Prelude              hiding ((<>))
+import           Prelude               hiding ((<>))
 
-import           Control.Arrow        (first, (***))
-import           Control.Monad.Reader
-import           Data.List            (sortOn)
-import           Data.Maybe           (fromMaybe)
-import           Text.PrettyPrint
+import           Data.List             (nub)
+import           Data.List.NonEmpty    (fromList)
+import           Data.Loc              (noLoc)
+import           Data.Maybe            (mapMaybe)
+import           Data.Text             (pack)
+import qualified Data.Text.IO          as TIO
 
-import           System.Directory
+import           Language.PySMEIL
+import           Language.SMEIL.Pretty
+import qualified Language.SMEIL.Syntax as S
 
-import           Language.SMEIL
-import           Language.SMEIL.VHDL
+mkIdent :: Ident -> S.Ident
+mkIdent i = S.Ident (pack i) noLoc
 
-import           Debug.Trace
+mkType :: DType -> S.Typeness
+mkType (IntType n)   = S.Typed $ S.Signed (Just $ fromIntegral n) noLoc
+mkType (UIntType n)  = S.Typed $ S.Unsigned (Just $ fromIntegral n) noLoc
+mkType (FloatType _) = S.Typed $ S.Double noLoc
+mkType BoolType      = S.Typed $ S.Bool noLoc
+mkType AnyType       = S.Untyped
 
-type PortList = Doc
-type PortMap = Doc
-type SensitivityList = Doc
-type SignalList = Doc
-type FunBody = Doc
-type ArchitectureBody = Doc
-type GenericDefs = Doc
+mkBool :: SMEBool -> S.Literal
+mkBool SMETrue  = S.LitTrue noLoc
+mkBool SMEFalse = S.LitFalse noLoc
 
--- TODO: Split into two modules: One for doing the file handling stuff and one
--- for rendering the actual output
 
-data OutputFile = OutputFile { dir    :: FilePath
-                             , file   :: FilePath
-                             , output :: Doc
-                             }
-                  deriving Show
+mkNum :: SMENum -> S.Literal
+mkNum (SMEInt i)   = S.LitInt (fromIntegral i) noLoc
+mkNum (SMEFloat d) = S.LitFloat d noLoc
 
-type OutputPlan = [OutputFile]
+mkPrimVal :: PrimVal -> S.Literal
+mkPrimVal (Num n)  = mkNum n
+mkPrimVal (Bool b) = mkBool b
+mkPrimVal EmptyVal = S.LitInt 0 noLoc
 
-concatPath :: OutputFile -> FilePath
-concatPath OutputFile { dir = d
-                      , file = f
-                      } = d ++ "/" ++ f
+mkStmts :: Stmts -> [S.Statement]
+mkStmts (Stmts ss) = mapMaybe mkStmt ss
 
-findPred :: forall a b. (Network -> [a])
-            -> (a -> Bool)
-            -> (a -> b)
-            -> Reader Network (Maybe b)
-findPred n p f = asks n >>= pure . locate
+mkStmt :: Stmt -> Maybe S.Statement
+mkStmt (Assign var expr) = Just $ S.Assign (fromVar var) (toExpr expr) noLoc
+mkStmt (Cond cases els) =
+  let (c, b, r) = splitCond cases
+      e =
+        case mkStmts els of
+          [] -> Nothing
+          s  -> Just s
+  in Just $ S.If c b r e noLoc
   where
-    locate :: [a] -> Maybe b
-    locate [] = Nothing
-    locate (e:es)
-      | p e = Just $ f e
-      | otherwise = locate es
+    splitCond ((e1, s1):rest) = (toExpr e1, mkStmts s1, map mkCond rest)
+    splitCond []              = error "If without conditions"
+    mkCond (ex, stms) = (toExpr ex, mkStmts stms)
+mkStmt NopStmt = Nothing
 
--- ppIf :: Bool -> Doc -> Doc
--- ppIf c d = if c then d else empty
+mkUnOp :: UnOps -> S.UnOp
+mkUnOp NotOp = S.NegOp noLoc
 
-labelBlock :: Ident -> Doc -> Doc
-labelBlock i d = pp i <> colon <+> d
-
-entity :: Ident -> PortList -> GenericDefs -> Doc
-entity s d g = pp Entity <+> text s <+> pp Is
-  $+$ indent ((if isEmpty g then empty else pp Generic <+> parens g <> semi)
-              $+$ (pp Port <+> parens
-                   ( indent (
-                       d
-                       $+$ text "rst: in std_logic;"
-                       $+$ text "clk: in std_logic"
-                       $+$ blank)) <> semi))
-  $+$ pp End <+> text s <> semi
-
-funPortNames :: (Ident, Ident) -> Reader Network [Doc]
-funPortNames (n, t) = do
-  -- FIXME: This simply returns nothing if the bus referred to
-  -- 1) Do static checking in Binder to make sure this cannot fail
-  ps <- findPred busses (\bn -> t == busName bn) (map fst . busPorts)
-  return $ map (\s -> underscores [n,s]) (fromMaybe [] ps)
-
-funTypeNames :: (Ident, Ident) -> Reader Network [DType]
-funTypeNames (_n, t) = fromMaybe [] <$> findPred busses (\bn -> t == busName bn) (map snd . busPorts)
-
--- |Generates a list of input and output ports
-entPorts :: Function -> Reader Network Doc
-entPorts Function { funInports = ins
-                  , funOutports = outs } = vcat <$> sequence (map (ports Out) outs
-                                                              ++ map (ports In) ins)
+mkOp :: BinOps -> S.BinOp
+mkOp o = go o noLoc
   where
-    ports :: VHDLKw -> (Ident, Ident) -> Reader Network Doc
-    ports d ps = do
-      portList <- zip <$> funPortNames ps <*> funTypeNames ps
-      return $ vcat $
-        map (\(s, t) -> s <> colon <+> pp d <+> pp t <> semi) portList
+    go PlusOp  = S.PlusOp
+    go MinusOp = S.MinusOp
+    go MulOp   = S.MulOp
+    go EqOp    = S.EqOp
+    go NeqOp   = S.NeqOp
+    go GeOp    = S.GtOp
+    go LeOp    = S.LtOp
+    go GeqOp   = S.GeqOp
+    go LeqOp   = S.LeqOp
+    go DivOp   = S.DivOp
+    go OrOp    = S.OrOp
+    go XorOp   = S.XorOp
+    go AndOp   = S.AndOp
+    go SLOp    = S.SllOp
+    go SROp    = S.SrlOp
 
--- TODO: Support other types than integer here
-entGenerics :: Function -> FunType -> Doc
-entGenerics Function { funParams = [] } _ =
-  empty
-entGenerics Function { funParams = p } ft =
-  skeletonComment ft $ vcat $ punctuate semi $ map (\v -> pp v <> colon <+> pp Integer <> skeletonDefaults ft) (getVars p)
+mkNamePart :: S.Ident -> S.NamePart
+mkNamePart i = S.IdentName i noLoc
+
+class FromVar a where
+  fromVar :: Variable -> a
+
+instance FromVar S.Expr where
+  fromVar (ConstVar ty i) = S.PrimName (mkType ty) (mkName (mkIdent i)) noLoc
+  fromVar (BusVar ty i1 i2) =
+    S.PrimName (mkType ty) (mkName2 (mkIdent i1) (mkIdent i2)) noLoc
+  fromVar (NamedVar ty i) = S.PrimName (mkType ty) (mkName (mkIdent i)) noLoc
+  fromVar (ParamVar ty i) = S.PrimName (mkType ty) (mkName (mkIdent i)) noLoc
+
+instance FromVar S.Name where
+  fromVar (ConstVar _ i)   = mkName (mkIdent i)
+  fromVar (BusVar _ i1 i2) = mkName2 (mkIdent i1) (mkIdent i2)
+  fromVar (NamedVar _ i)   = mkName (mkIdent i)
+  fromVar (ParamVar _ i)   = mkName (mkIdent i)
+
+
+mkName :: S.Ident -> S.Name
+mkName i = S.Name (fromList [mkNamePart i]) noLoc
+
+mkName2 :: S.Ident -> S.Ident -> S.Name
+mkName2 i i2 = S.Name (fromList (map mkNamePart [i, i2])) noLoc
+
+class ToExpr a where
+  toExpr :: a -> S.Expr
+
+instance ToExpr Expr where
+  toExpr BinOp {..} = S.Binary S.Untyped (mkOp op) (toExpr left) (toExpr right) noLoc
+  toExpr UnOp {..} = S.Unary S.Untyped (mkUnOp unOp) (toExpr unOpVal) noLoc
+  toExpr (Var v)    = fromVar v
+  toExpr (Paren e) = toExpr e
+  toExpr (Prim p) = toExpr p
+  toExpr NopExpr    = S.PrimLit S.Untyped (S.LitInt 0 noLoc) noLoc
+
+instance ToExpr PrimVal where
+  toExpr v = S.PrimLit S.Untyped (mkPrimVal v) noLoc
+
+instance ToExpr String where
+  toExpr i = S.PrimName S.Untyped (mkName $ mkIdent i) noLoc
+
+mkDecl :: Decl -> S.Declaration
+mkDecl (Decl (ConstVar _ i) t (Just e)) =
+  S.ConstDecl $ S.Constant (mkIdent i) (mkType t) (toExpr e) noLoc
+mkDecl (Decl (NamedVar _ i) t e) =
+  S.VarDecl $ S.Variable (mkIdent i) (mkType t) (toExpr <$> e) Nothing noLoc
+mkDecl _ = error "This decl may not occur here"
+
+mkConstPar :: Decl -> S.Param
+mkConstPar (Decl (ParamVar _ i) _ _) =
+  S.Param Nothing (S.Const noLoc) (mkIdent i) noLoc
+mkConstPar (Decl (NamedVar _ i) _ _) =
+  S.Param Nothing (S.Const noLoc) (mkIdent i) noLoc
+mkConstPar (Decl (ConstVar _ i) _ _) =
+  S.Param Nothing (S.Const noLoc) (mkIdent i) noLoc
+mkConstPar _ = error "Not a valid ConstPar"
+
+mkProcs :: Network -> [S.UnitElement]
+mkProcs Network {..} = map (S.UnitProc . go) functions
   where
-    getVars vs = [ v | (Decl v _ _) <- vs ]
-    skeletonDefaults Skeleton = text " := 0"
-    skeletonDefaults _        = text ""
-    skeletonComment Skeleton d = text "-- Implicit default generic values for skeleton functions"
-                                 $+$ d
-    skeletonComment _ d = d
-
-architecture :: Ident -> SignalList -> Doc -> Doc
-architecture s signals body = pp Architecture <+> text "RTL" <+> pp Of <+> text s <+> pp Is
-  $+$ indent signals
-  $+$ pp Begin
-  $+$ indent body
-  $+$ pp EndArchitecture <> semi
-
-makeVarVal :: Maybe Expr -> DType -> Doc
-makeVarVal v t = fromMaybe empty ((\e -> space <> pp Gets
-                                         <+> assignCast (typeOf e) (pp' e t)) <$> v)
-
-commentAnyType :: DType -> DType -> Doc
-commentAnyType t1 t2 = if ((t1 == AnyType) || (t2 == AnyType))
-                       then text "-- "
-                       else text ""
-
-makeVar :: Decl -> Doc
-makeVar (Decl (NamedVar ty n) t v) = commentAnyType t ty <> pp Variable <+> text n <> colon
-                                     <+> pp t  <> makeVarVal v ty <> semi
-makeVar (Decl (ConstVar ty n) t v) = commentAnyType t ty <> pp Constant <+> text n <> colon
-  <+> pp t <> makeVarVal v ty <> semi
-makeVar _ = empty
-
-funSignalReset :: (Ident, Ident) -> Reader Network Doc
-funSignalReset p = do
-  ports <- zip <$> funPortNames p <*> funTypeNames p
-  -- FIXME: Maybe its better to generate SMEIL here and pretty print it?
-  return $ vcat $ map (\(a, t) -> a <+> pp BusGets <+> primDefaultVal t <> semi) ports
-
-funVarReset :: Decl -> Doc
-funVarReset (Decl v@(NamedVar ty _) _ _) = commentAnyType ty ty
-                                           <> pp v <+> pp Gets <+> primDefaultVal ty <> semi
-funVarReset (Decl (ConstVar _ty _n) _t _v) = empty
-funVarReset _ = empty
-
-process :: Ident -> FunBody -> SensitivityList -> Reader Network Doc
-process fname body sensitivity = do
-  -- XXX: Why not pass function from caller?
-  vars <- fromMaybe [] <$> findPred functions (\s -> fname == funName s) locals
-  fun <- fromMaybe [] <$> findPred functions (\s -> fname == funName s) funOutports
-  sigResets <- vcat <$> mapM funSignalReset fun
-  let varResets = vcat $ map funVarReset vars
-  return (pp Process <+> parens ( empty $+$ sensitivity )
-          -- TODO: Split definitions on constants and variables
-          $+$ vcat (map makeVar vars)
-          $+$ pp Begin
-          $+$ indent (pp If <+> text "rst = '1'" <+> pp Then
-                      $+$ indent (sigResets
-                                  $+$ varResets)
-                      $+$ pp Elsif <+> pp (RisingEdge (text "clk")) <+> pp Then
-                      $+$ indent body
-                      $+$ pp EndIf <> semi
-                     )
-          $+$ pp EndProcess <> semi)
-
-instPortMap :: (Ident, Ident) -> Reader Network Doc
-instPortMap ps = do
-  bus <- findPred busses (\s -> snd ps == busName s) id
-  asTopPorts <- fromMaybe (return []) (topBusPorts <$> bus)
-  asFunPorts <- funPortNames ps
-  return $ vcat $ map (\(a, b) -> a <+> pp MapTo <+> b <> comma) (zip asFunPorts (map fst asTopPorts))
-  -- Format fun bus name => top lvl name
-
-instParamsMap :: [(Ident, PrimVal)] -> Doc
--- FIXME: This will produce non-working VHDL code because generics without a
--- default value are left uninstantiated. Either set Decls with Nothing
--- expression to 0 by default or assign a default value to generics in
--- entities generated from external functions
-instParamsMap ps = vcat $ commas $ filter (not.isEmpty) $ map (\(i, e) ->
-                                          if e /= EmptyVal then
-                                             text i <+> pp MapTo <+> pp e
-                                          else empty) ps
-
-inst :: Instance -> Reader Network Doc
-inst Instance { instName = name
-              , instFun = fun
-              , inBusses = inbus
-              , outBusses = outbus
-              , instParams = params
-              } = do
-  funDef <- findPred functions (\n -> funName n == fun) id
-  let funPorts = concat $ fromMaybe [] $ sequence [ toRealBus inbus . funInports <$> funDef
-                                                  , toRealBus outbus . funOutports <$> funDef]
-  portMaps <- vcat <$> mapM instPortMap funPorts
-  let genMaps = instParamsMap params
-  return $ text name <> colon <+> pp Entity <+> pp Work <> text "." <> text fun
-    $+$ (if isEmpty genMaps then empty else pp GenericMap <+> parens genMaps)
-    $+$ pp PortMap <+> parens (indent ( portMaps
-                                        $+$ clockedMap
-                                      )) <> semi
-    where
-      toRealBus bs ps = [(fst p, b) | (b, p) <- zip bs ps]
-
-topBusPorts :: Bus -> Reader Network [(Doc, DType)]
-topBusPorts b = do
-  nn <- asks netName
-  let bn = busName b
-  let bp = busPorts b
-  return $ map (\(s, t) -> (underscores [nn, bn, s], t)) bp
-
-topPorts :: Reader Network Doc
-topPorts = do
-  sigdefs <- asks busses >>= mapM topBusPorts
-  return $ sigDefs $ concat sigdefs
-  where
-    sigDefs :: [(Doc, DType)] -> Doc
-    sigDefs = vcat . map (\(s, t) -> s  <> colon <+> pp InOut <+> pp t <> semi)
-
-makeTopLevel :: Reader Network Doc
-makeTopLevel = do
-  nname <- asks netName
-  ports <- topPorts
-  insts <- asks instances >>= mapM inst
-  return $ entity nname ports empty
-    $+$ architecture nname (text "-- signals") (vcat insts)
-
-tbSigDefs :: Reader Network [Doc]
-tbSigDefs = do
-  sigs <- asks busses >>= mapM topBusPorts
-  return $ map (\(n, t) -> pp Signal <+> n <> colon <+> pp t <> semi) (concat sigs)
-
-tbBuss :: Reader Network [(Doc, Doc)]
-tbBuss = do
-  a <- asks busses >>= mapM topBusPorts
-  -- HACK: We need trace file busses to be in alphabetical order to match trace
-  -- CSV file header fields and Doc isn't an instance of Ord. We cant move this
-  -- to the more general functions since alphabetical ordering of signals
-  -- probably isn't ideal everywhere.
-  return $ map (first text) $ sortOn fst $ map (render *** tbValImage) $ concat a
-
-tbSigMaps :: Reader Network [Doc]
-tbSigMaps = map (\(n, _) -> n <+> pp MapTo <+> n <> comma) <$> tbBuss
-
-tbValImage :: DType -> Doc
-tbValImage BoolType = pp "std_logic'image"
-tbValImage t = case sign t of
-  IsSigned   -> pp "int_image"
-  IsUnsigned -> pp "uint_image"
-
-makeTB :: Reader Network Doc
-makeTB = do
-  nn <- asks netName
-  nntb <- (++ "_tb") <$> asks netName
-  signals <- vcat <$> tbSigDefs
-  buss <- tbBuss
-  sigMaps <- tbSigMaps
-  return (tbHeader
-          $+$ pp Entity <+> pp nntb <+> pp Is
-          $+$ pp End <+> pp nntb <> semi
-          $+$ architecture nntb (signals $+$ tbSignals)
-          ( pp "uut" <> colon <+> pp Entity <+> pp "work." <> pp nn
-            $+$ pp PortMap <+> parens (
-              indent ( vcat sigMaps
-                       $+$ tbClockedMap
-                     )
-              ) <> semi
-            $+$ clkProcess
-            $+$ pp "TraceTester" <> colon <+> pp Process
-            $+$ indent (testerDecls
-                        $+$ pp "-- More decls here"
-                       )
-            $+$ pp Begin
-            $+$ indent (pp (FileOpen (pp "Status") (pp "F") (pp "filename")) <> semi
-                        $+$ pp If <+> pp "Status" <+> pp NeqOp <+> pp "OPEN_OK" <+> pp Then
-                        $+$ indent (pp Report <+> pp "\"Unable to open trace file\"" <> semi)
-                        $+$ pp Else
-                        $+$ indent (pp (ReadLine (pp "F") (pp "L")) <> semi
-                                    $+$ pp "fieldno" <+> pp Gets <+> pp "0" <> semi
-                                    $+$ vcat (map (fieldCheck . fst) buss)
-                                     $+$ tbResetWait
-                                    $+$ pp While <+> pp Not <+> pp (EndFile (pp "F")) <+> pp Loop
-                                    $+$ indent (pp (ReadLine (pp "F") (pp "L")) <> semi
-                                                $+$ pp Wait <+> pp Until <+> pp (RisingEdge (pp "clock")) <> semi
-                                                $+$ pp "fieldno" <+> pp Gets <+> pp "0" <> semi
-                                                $+$ vcat (map (uncurry valCheck) buss)
-                                                $+$ pp "clockcycle" <+> pp Gets <+> pp "clockcycle" <+> pp PlusOp <+> pp "1" <> semi
-                                              )
-                                    $+$ pp EndLoop <> semi
-                                    $+$ pp (FileClose (pp "F")) <> semi
-                                   )
-                        $+$ pp EndIf <> semi
-                        $+$ pp Report <+> text "\"Completed after \" & integer'image(clockcycle) & \" clockcycles\"" <> semi
-                        $+$ pp "stop_clock" <+> pp BusGets <+> pp True <> semi
-                        $+$ pp Wait <> semi
-                       )
-            $+$ pp EndProcess <> semi
-          )
-         )
-
-makeTypeDefs :: [DType] -> Doc
-makeTypeDefs ts = typesHead
-  $+$ pp Package <+> text "sme_types" <+> pp Is
-  $+$ indent ((pp Subtype <+> text "bool_t" <+> pp Is <+> pp StdLogic <> semi)
-              $+$ vcat (map typeDefs ts)
-              $+$ vcat (map funDefs ts)
-             )
-  $+$ pp End <+> text "sme_types" <> semi
-  $+$ text ""
-  $+$ pp Package <+> pp Body <+> text "sme_types" <+> pp Is
-  $+$ indent (vcat $ map bodyFuns ts)
-  $+$ pp End <+> text "sme_types" <> semi
-  where
-    typeDefs :: DType -> Doc
-    typeDefs t = pp Subtype <+> pp t <+> pp Is <+> pp (StdLogicVector (pp (sizeOf t - 1) <+> pp Downto <+> pp "0")) <> semi
-    -- FIXME: Distinguish between integers and naturals (only convert from
-      -- natural to unsigned and integer to signed)
-    funDefs t = pp "" $+$ pp "-- converts an integer to" <+> typeName t
-                $+$ pp PureFunction <+> typeName t <> parens (pp "v" <> colon <+> pp Integer)
-                <+> (pp Return <+> pp t <> semi)
-
-    bodyFuns t = pp PureFunction <+> typeName t <> parens (text "v" <> colon
-                                                                   <+> pp Integer)
-      <+> pp Return <+> pp t <+> pp Is
-      $+$ pp Begin
-      $+$ indent (pp Return <+> pp (StdLogicVector (pp $ toSign (pp "v") (pp $ Length (pp t)))) <> semi)
-      $+$ pp End <+> typeName t <> semi
-      -- FIXME: Causes trailing spaces after newline
-      $+$ pp ""
+    go Function {..} =
+      S.Process
+        (mkIdent funName)
+        (mkInPorts ++ mkOutPorts ++ mkConstPorts)
+        (map mkDecl locals)
+        (mkStmts funBody)
+        True
+        noLoc
       where
-        -- FIXME: This doesn't take into account floats, but we don't have any
-        -- of those yet
-        toSign :: Doc -> Doc -> VHDLFuns
-        toSign d1 d2 = case sign t of
-                         IsSigned   -> ToSigned d1 d2
-                         IsUnsigned -> ToUnsigned d1 d2
+        mkInPorts = mkPorts funInports (S.In noLoc)
+        mkOutPorts = mkPorts funInports (S.Out noLoc)
+        mkPorts ps dir =
+          map (\x -> S.Param Nothing dir (mkIdent x) noLoc) (nub (map fst ps))
+        mkConstPorts = map mkConstPar funParams
 
-{-|
-
-Toplevel: in entity, for every bus referenced by instances
-
--}
-
-vhdlExt :: FilePath -> FilePath
-vhdlExt = flip (++) ".vhdl"
-
-makeFun :: Function -> Reader Network OutputFile
-makeFun f = do
-  let fname = funName f
-  let generics = entGenerics f $ funType f
-  ports <- entPorts f
-  procc <- process fname (pp (funBody f))(vcat [ text "clk" <> comma , text "rst" ])
-  return OutputFile { dir = ""
-                    , file = vhdlExt fname
-                    , output = header
-                      $+$ entity fname ports generics
-                      $+$ architecture fname empty procc
-                    }
-
-
-makeNetwork :: [DType] -> Reader Network OutputPlan
-makeNetwork ts = do
-  nn <- asks netName
-  funs <- asks functions
-  outFuns <- mapM makeFun funs
-  tl <- makeTopLevel
-  tb <- makeTB
-  return $ OutputFile { dir = ""
-                      , file = vhdlExt nn
-                      , output = header $+$ tl
-                      }
-    : OutputFile { dir = ""
-                 , file = vhdlExt "csv_util"
-                 , output = csvUtil
-                 }
-    : OutputFile { dir = ""
-                 , file = vhdlExt "sme_types"
-                 , output = makeTypeDefs ts
-                 }
-    : OutputFile { dir = ""
-                 , file = vhdlExt $ nn ++ "_tb"
-                 , output  = tb
-                 }
-    : outFuns
-
-makePlan :: Network -> [DType] -> OutputPlan
-makePlan n ts = runReader (makeNetwork ts) n
-
-execPlan :: OutputPlan -> IO ()
-execPlan = mapM_ (makeOutput . spliceDir)
+mkBus :: Bus -> S.Bus
+mkBus Bus {..} = S.Bus True False (mkIdent busName) (map mkSig busPorts) noLoc
   where
-    makeOutput :: OutputFile -> IO ()
-    makeOutput outf@OutputFile { dir = d
-                               , output = o
-                               } = do
-      createDirectoryIfMissing True d
-      let path = concatPath outf
-      exists <- doesFileExist path
-      if exists then
-        fail $ "File " ++ path ++ " already exists"
-        else
-        writeFile path (render o)
+    mkSig (i, t) = S.BusSignal (mkIdent i) (mkType t) Nothing Nothing noLoc
 
-    spliceDir :: OutputFile -> OutputFile
-    spliceDir x = x { dir = "output" }
+mkInst :: Instance -> S.Instance
+mkInst Instance {..} =
+  S.Instance
+    (Just (mkIdent instName))
+    Nothing
+    (mkName $ mkIdent instFun)
+    ((map (\i -> (Nothing, toExpr i)) (inBusses ++ outBusses)) ++
+     (map (\(i, e) -> (Just (mkIdent i), toExpr e)) instParams))
+    noLoc
+
+mkNet :: Network -> S.UnitElement
+mkNet Network {..} =
+  S.UnitNet $
+  S.Network
+    (mkIdent netName)
+    []
+    (map (S.NetBus . mkBus) busses ++ map (S.NetInst . mkInst) instances)
+    noLoc
+
+mkProg :: Network -> S.DesignFile
+mkProg n = S.DesignFile [S.DesignUnit [] (mkProcs n ++ [mkNet n]) noLoc] noLoc
+
+writeOutput :: Network -> IO ()
+writeOutput n =
+  let fname = netName n ++ ".sme"
+  in TIO.writeFile fname (pprr (mkProg n))

@@ -1,7 +1,7 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
-module Language.SMEIL.Instances ( Variable (..) ) where
+module Language.PySMEIL.Instances ( Variable (..) ) where
 
-import Language.SMEIL.AST
+import           Language.PySMEIL.AST
 
 -- TODO: Is there a better way to do this?
 instance Ord Variable where

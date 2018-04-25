@@ -1,27 +1,24 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE LambdaCase                 #-}
 
 module Almique.Binder
        ( bindPyMod
        , BindErr
        ) where
 
-import Control.Monad.Reader
-import Control.Monad.Except
-import qualified Data.Map.Strict as Map hiding (map)
-import qualified Data.Set as Set hiding (delete)
-import Data.Maybe (isNothing, fromMaybe, catMaybes)
-import Data.List hiding (delete)
-import Data.Monoid
-import Data.Set (toList, fromList, delete)
+import           Control.Monad.Except
+import           Control.Monad.Reader
+import           Data.List            hiding (delete)
+import qualified Data.Map.Strict      as Map hiding (map)
+import           Data.Maybe           (catMaybes, fromMaybe, isNothing)
+import           Data.Set             (delete, fromList, toList)
 
-import Language.SMEIL
-import qualified Almique.Analyzer as A
+import qualified Almique.Analyzer     as A
+import           Language.PySMEIL
 
-import Debug.Trace
+import           Debug.Trace
 
 type InstPorts = (Ident, ([Ident], [Ident]))
-type InstParams = (Ident, (DType, Ident))
 --type VarTypes = Set.Set Variable
 type VarTypes = Map.Map Ident DType
 
@@ -42,7 +39,7 @@ queryNamedIS :: String -> (A.FunInterpState -> a) -> BindM a
 queryNamedIS i f = do
   sts <- asks A.funStates
   case Map.lookup i sts of
-    Just v -> return $ f v
+    Just v  -> return $ f v
     Nothing -> throwError $ "Undefined function: " ++ i
 
 queryFunIS :: String -> (Function -> a) -> BindM a
@@ -93,7 +90,7 @@ queryBusDef i f = do
   case Map.lookup i el of
     Just v -> return $ f v
     Nothing -> case busByName $ Map.elems el of
-      Just v -> return $ f v
+      Just v  -> return $ f v
       Nothing -> throwError $ "Reference to undefined bus " ++ i
     where
       -- HACK: The map of busses maps from the variable name that busses were
@@ -139,7 +136,7 @@ genNameSet fName busNameMap localList params = do
     -- inferring parameter types based on parameter values in instantiations
     paramVars (Decl (NamedVar AnyType n) _ _) = (n, IntType 32)
     -- FIXME: Do something better here
-    paramVars (Decl v _ _) = (nameOf v, typeOf v)
+    paramVars (Decl v _ _)                    = (nameOf v, typeOf v)
 
 -- | For each function, check that all variables in function bodies are defined
 -- verify that variable kinds are correct. Furthermore, we should infer the
@@ -258,9 +255,9 @@ setType vs v = do
                 Just t -> return t
                 Nothing -> throwError $ "Undefined variable  " ++ show vs ++ " " ++  show v
   case v of
-    (ConstVar _ n) -> return $ ConstVar varType' n
-    (ParamVar _ n) -> return $ ParamVar varType' n
-    (NamedVar _ n) -> return $ NamedVar varType' n
+    (ConstVar _ n)  -> return $ ConstVar varType' n
+    (ParamVar _ n)  -> return $ ParamVar varType' n
+    (NamedVar _ n)  -> return $ NamedVar varType' n
     (BusVar _ n n') -> return $ BusVar varType' n n'
 
 {- TODO:

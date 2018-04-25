@@ -29,6 +29,9 @@ dependencies:
   - pretty
   - parsec
   - here
+  - libsme
+  - text
+  - srcloc
 
 executables:
   almique:
